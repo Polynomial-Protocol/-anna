@@ -1,0 +1,43 @@
+name: Anna
+options:
+  bundleIdPrefix: com.damienjacob
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: com.damienjacob.anna
+    PRODUCT_NAME: Anna
+    SWIFT_VERSION: 5.10
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGN_STYLE: Automatic
+    INFOPLIST_KEY_CFBundleDisplayName: Anna
+    INFOPLIST_KEY_NSMicrophoneUsageDescription: Anna captures audio while you hold Right Command to transcribe commands and while you hold Right Option to dictate into the active field.
+    INFOPLIST_KEY_NSAppleEventsUsageDescription: Anna controls supported apps like Safari and Music only after you ask it to and grant automation permission.
+    INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Anna uses on-device speech recognition to transcribe your voice commands and dictation.
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    from: "0.7.9"
+targets:
+  Anna:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Core
+      - Domain
+      - Features
+      - Infrastructure
+      - Models
+      - UIComponents
+    dependencies:
+      - package: FluidAudio
+    settings:
+      base:
+        PRODUCT_NAME: Anna
+        ENABLE_APP_SANDBOX: NO
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: NO
