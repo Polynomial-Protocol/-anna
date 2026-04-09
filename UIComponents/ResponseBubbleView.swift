@@ -1,29 +1,30 @@
 import SwiftUI
 import AppKit
 
-// MARK: - Floating NSPanel
+// MARK: - Floating NSPanel (borderless, transparent, click-through)
 
 final class ResponseBubblePanel: NSPanel {
     init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
-            styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         isFloatingPanel = true
-        level = .statusBar
+        level = .floating
         backgroundColor = .clear
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
-        isMovableByWindowBackground = true
+        isMovableByWindowBackground = false
         hidesOnDeactivate = false
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         isOpaque = false
-        hasShadow = true
+        hasShadow = false
+        ignoresMouseEvents = true  // Click-through: never blocks interaction
     }
 
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 }
 
@@ -34,11 +35,11 @@ final class ResponseBubbleController: ObservableObject {
     @Published var isVisible = false
 
     private var panel: ResponseBubblePanel?
-    private let panelWidth: CGFloat = 360
-    private let panelHeight: CGFloat = 260
+    private let panelWidth: CGFloat = 480
+    private let panelHeight: CGFloat = 200
 
     func show(viewModel: AssistantViewModel) {
-        guard panel == nil else {
+        if panel != nil {
             panel?.orderFront(nil)
             isVisible = true
             return
@@ -46,17 +47,22 @@ final class ResponseBubbleController: ObservableObject {
 
         let frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
         let newPanel = ResponseBubblePanel(contentRect: frame)
-        newPanel.contentView = NSHostingView(rootView: ResponseBubbleContent(viewModel: viewModel))
+        newPanel.contentView = NSHostingView(
+            rootView: ResponseOverlayContent(viewModel: viewModel)
+                .frame(width: panelWidth, height: panelHeight)
+        )
 
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        if let sf = screen?.visibleFrame {
-            newPanel.setFrameOrigin(NSPoint(x: sf.maxX - panelWidth - 16, y: sf.maxY - panelHeight - 8))
+        // Position: bottom-center of main screen
+        if let sf = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
+            let x = sf.midX - panelWidth / 2
+            let y = sf.minY + 60
+            newPanel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
         newPanel.alphaValue = 0
         newPanel.orderFront(nil)
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.25
+            ctx.duration = 0.3
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             newPanel.animator().alphaValue = 1.0
         }
@@ -68,141 +74,174 @@ final class ResponseBubbleController: ObservableObject {
     func hide() {
         guard let p = panel else { return }
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.2
+            ctx.duration = 0.25
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             p.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
-            p.orderOut(nil); p.close(); self?.panel = nil
+            p.orderOut(nil)
+            p.close()
+            self?.panel = nil
         })
         isVisible = false
     }
 }
 
-// MARK: - Content
+// MARK: - Overlay Content (minimal floating text)
 
-struct ResponseBubbleContent: View {
+struct ResponseOverlayContent: View {
     @ObservedObject var viewModel: AssistantViewModel
+    @State private var showResponse = false
+    @State private var previousStreamingText = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Status
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(viewModel.status.color)
-                    .frame(width: 6, height: 6)
-                Text(viewModel.status.displayText)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
-                Spacer()
-                if viewModel.isCapturing {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 12))
-                        .foregroundStyle(viewModel.status.color)
-                        .symbolEffect(.pulse)
-                }
-                if viewModel.status == .speaking {
-                    Button { viewModel.stopSpeaking() } label: {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.4))
-                    }
-                    .buttonStyle(.plain)
-                }
+        VStack(spacing: 8) {
+            Spacer()
+
+            // Response text (auto-dismiss after display)
+            if showResponse && !viewModel.streamingText.isEmpty {
+                responseView
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.96)).combined(with: .offset(y: 6)),
+                        removal: .opacity
+                    ))
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
 
-            Rectangle().fill(.white.opacity(0.04)).frame(height: 1)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    if viewModel.isCapturing {
-                        HStack(spacing: 8) {
-                            Image(systemName: "mic.fill")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.red.opacity(0.7))
-                                .symbolEffect(.pulse)
-                            Text(viewModel.activeMode == .assistantCommand ? "I'm listening..." : "Go ahead, I'll type...")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.white.opacity(0.6))
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-
-                    if !viewModel.lastTranscript.isEmpty {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("You")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.3))
-                            Text(viewModel.lastTranscript)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-
-                    if !viewModel.streamingText.isEmpty {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Anna")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.3))
-                            Text(viewModel.streamingText)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.65))
-                                .animation(.easeIn(duration: 0.05), value: viewModel.streamingText)
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-
-                    if let event = viewModel.events.first, viewModel.streamingText.isEmpty {
-                        HStack(alignment: .top, spacing: 6) {
-                            Circle()
-                                .fill(toneColor(event.tone))
-                                .frame(width: 5, height: 5)
-                                .padding(.top, 4)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(event.title)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.6))
-                                Text(event.body)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.white.opacity(0.45))
-                                    .lineLimit(3)
-                            }
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                }
-                .padding(12)
+            // Status indicator (listening, thinking, etc.)
+            if viewModel.status.isActive {
+                statusView
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.92)),
+                        removal: .opacity
+                    ))
             }
         }
-        .frame(width: 360, height: 260)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(red: 0.08, green: 0.08, blue: 0.10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(.white.opacity(0.06), lineWidth: 0.5)
-                )
-                .shadow(color: .black.opacity(0.4), radius: 16)
-        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: viewModel.streamingText) { _, newValue in
+            if !newValue.isEmpty && newValue != previousStreamingText {
+                withAnimation(.easeOut(duration: 0.25)) { showResponse = true }
+                previousStreamingText = newValue
+                scheduleAutoDismiss(for: newValue)
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: viewModel.status)
     }
 
-    private func toneColor(_ tone: AssistantEvent.EventTone) -> Color {
-        switch tone {
-        case .neutral: return .white.opacity(0.2)
-        case .success: return Color(hex: "69D3B0")
-        case .warning: return Color(hex: "FFC764")
-        case .failure: return .red.opacity(0.7)
+    // MARK: - Response View
+
+    private var responseView: some View {
+        Text(viewModel.streamingText)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(.white)
+            .multilineTextAlignment(.center)
+            .lineLimit(4)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.black.opacity(0.45))
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                            .opacity(0.3)
+                    )
+            )
+            .shadow(color: .black.opacity(0.2), radius: 20, y: 4)
+            .frame(maxWidth: 440)
+    }
+
+    // MARK: - Status View
+
+    private var statusView: some View {
+        HStack(spacing: 6) {
+            // Animated dots for active states
+            if viewModel.status == .listening {
+                pulsingDot
+            } else if viewModel.status != .idle {
+                thinkingDots
+            }
+
+            Text(viewModel.status.displayText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.8))
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(
+            Capsule()
+                .fill(.black.opacity(0.35))
+                .background(
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.2)
+                )
+        )
+        .shadow(color: .black.opacity(0.15), radius: 12, y: 2)
+    }
+
+    // MARK: - Animated Elements
+
+    private var pulsingDot: some View {
+        Circle()
+            .fill(.red.opacity(0.8))
+            .frame(width: 6, height: 6)
+            .scaleEffect(1.0)
+            .modifier(PulseModifier())
+    }
+
+    private var thinkingDots: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(.white.opacity(0.6))
+                    .frame(width: 4, height: 4)
+                    .modifier(BounceDotModifier(delay: Double(i) * 0.15))
+            }
+        }
+    }
+
+    // MARK: - Auto-dismiss
+
+    private func scheduleAutoDismiss(for text: String) {
+        let wordCount = text.split(separator: " ").count
+        // 1.5s base + 0.1s per word, capped at 5s
+        let duration = min(5.0, 1.5 + Double(wordCount) * 0.1)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            // Only dismiss if the text hasn't changed (new response would reschedule)
+            if viewModel.streamingText == text || viewModel.status == .idle {
+                withAnimation(.easeOut(duration: 0.4)) { showResponse = false }
+            }
+        }
+    }
+}
+
+// MARK: - Animation Modifiers
+
+private struct PulseModifier: ViewModifier {
+    @State private var isPulsing = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isPulsing ? 1.3 : 1.0)
+            .opacity(isPulsing ? 0.6 : 1.0)
+            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isPulsing)
+            .onAppear { isPulsing = true }
+    }
+}
+
+private struct BounceDotModifier: ViewModifier {
+    let delay: Double
+    @State private var isBouncing = false
+
+    func body(content: Content) -> some View {
+        content
+            .offset(y: isBouncing ? -3 : 0)
+            .animation(
+                .easeInOut(duration: 0.4)
+                .repeatForever(autoreverses: true)
+                .delay(delay),
+                value: isBouncing
+            )
+            .onAppear { isBouncing = true }
     }
 }

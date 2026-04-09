@@ -233,6 +233,5 @@ final class AppContainer: ObservableObject {
     }
 
     deinit {
-        // PermissionsViewModel handles its own refresh via app activation observer
     }
 }

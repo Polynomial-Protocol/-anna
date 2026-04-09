@@ -63,21 +63,24 @@ enum AnnaStatus: String, CaseIterable, Sendable {
 
     var displayText: String {
         switch self {
-        case .idle: return "Ready"
-        case .listening: return "Listening..."
-        case .thinking: return "Thinking..."
-        case .acting: return "Acting..."
-        case .speaking: return "Speaking..."
+        case .idle: return ""
+        case .listening: return "Listening\u{2026}"
+        case .thinking: return "Thinking\u{2026}"
+        case .acting: return "On it\u{2026}"
+        case .speaking: return "Speaking\u{2026}"
         }
     }
 
+    /// Whether this state should show a visible overlay
+    var isActive: Bool { self != .idle }
+
     var color: Color {
         switch self {
-        case .idle: return .secondary
-        case .listening: return .red
-        case .thinking: return .orange
-        case .acting: return .blue
-        case .speaking: return .purple
+        case .idle: return .white.opacity(0.3)
+        case .listening: return .white
+        case .thinking: return .white.opacity(0.8)
+        case .acting: return .white.opacity(0.8)
+        case .speaking: return .white.opacity(0.7)
         }
     }
 }
