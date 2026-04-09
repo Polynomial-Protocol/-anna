@@ -89,10 +89,11 @@ final class MacPermissionService: PermissionService {
                 detail: granted ? "Accessibility access is ready." : "Anna needs Accessibility access for shortcuts and text insertion."
             )
         case .automation:
+            let granted = Self.checkAutomationAccess()
             return PermissionStatus(
                 kind: kind,
-                state: .manualStepRequired,
-                detail: "Automation permission is granted per target app after your first action."
+                state: granted ? .granted : .manualStepRequired,
+                detail: granted ? "Automation access is ready." : "Grant automation when prompted, or enable in Privacy & Security > Automation."
             )
         case .screenRecording:
             let granted = CGPreflightScreenCaptureAccess()
@@ -102,6 +103,19 @@ final class MacPermissionService: PermissionService {
                 detail: granted ? "Screen Recording is ready." : "Needed so Anna can see your screen and guide you."
             )
         }
+    }
+
+    /// Check if we can control System Events (proxy for automation access)
+    private static func checkAutomationAccess() -> Bool {
+        let script = NSAppleScript(source: "tell application \"System Events\" to return name of first process")
+        var error: NSDictionary?
+        _ = script?.executeAndReturnError(&error)
+        if let error = error,
+           let errorNumber = error[NSAppleScript.errorNumber] as? Int,
+           errorNumber == -1743 { // "Not authorized" error
+            return false
+        }
+        return error == nil
     }
 
     private static func runAppleScript(_ source: String) -> Bool {
