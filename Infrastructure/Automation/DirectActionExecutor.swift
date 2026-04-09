@@ -41,29 +41,73 @@ final class DirectActionExecutor {
             return .blocked(summary: "Could not open browser.")
         }
 
-        // Try multiple times with increasing delays to find and play the first video
-        for attempt in 0..<3 {
-            let delay: UInt64 = UInt64(3 + attempt * 2) * 1_000_000_000
+        // Try multiple strategies with increasing delays
+        for attempt in 0..<4 {
+            let delay: UInt64 = UInt64(2 + attempt * 2) * 1_000_000_000
             try? await Task.sleep(nanoseconds: delay)
 
-            // Strategy 1: JS extraction (most reliable when JS is enabled)
-            let extractJS = "(function(){var a=document.querySelector('a#video-title');if(a&&a.href)return a.href;var b=document.querySelectorAll('a');for(var i=0;i<b.length;i++){if(b[i].href&&b[i].href.indexOf('/watch?v=')>-1)return b[i].href}return ''})()"
-            let videoURL = executeJSInBrowser(extractJS, browser: browser)
-
-            if !videoURL.isEmpty && videoURL.contains("/watch?v=") {
-                // Navigate to the video in the SAME tab (not a new one)
+            // Strategy 1: Get page source and parse ytInitialData JSON for video ID
+            // This is the most reliable — doesn't require JS permissions
+            if let videoID = extractVideoIDFromPageSource(browser: browser) {
+                let videoURL = "https://www.youtube.com/watch?v=\(videoID)"
                 navigateCurrentTab(to: videoURL, browser: browser)
                 return .completed(summary: "Playing \"\(query)\" on YouTube.", openedURL: URL(string: videoURL))
             }
 
-            // Strategy 2: Get page source and regex-parse
-            if let firstVideoURL = extractFirstVideoURLFromPageSource(browser: browser) {
-                navigateCurrentTab(to: firstVideoURL, browser: browser)
-                return .completed(summary: "Playing \"\(query)\" on YouTube.", openedURL: URL(string: firstVideoURL))
+            // Strategy 2: JS extraction (works if JS from Apple Events is enabled)
+            let extractJS = "(function(){var a=document.querySelector('a#video-title');if(a&&a.href)return a.href;var l=document.querySelectorAll('a[href*=\"/watch?v=\"]');if(l.length>0)return l[0].href;return ''})()"
+            let videoURL = executeJSInBrowser(extractJS, browser: browser)
+            if !videoURL.isEmpty && videoURL.contains("/watch?v=") {
+                navigateCurrentTab(to: videoURL, browser: browser)
+                return .completed(summary: "Playing \"\(query)\" on YouTube.", openedURL: URL(string: videoURL))
             }
         }
 
         return .completed(summary: "Opened YouTube search for \"\(query)\". Couldn't auto-play first result.", openedURL: URL(string: searchURL))
+    }
+
+    /// Extracts the first video ID from YouTube's embedded ytInitialData JSON in page source.
+    /// This works without JS permissions since it reads raw HTML.
+    private func extractVideoIDFromPageSource(browser: BrowserType) -> String? {
+        let sourceScript: String
+        switch browser {
+        case .chrome:
+            sourceScript = """
+            tell application "Google Chrome"
+                tell active tab of front window
+                    return execute javascript "document.documentElement.outerHTML.substring(0,100000)"
+                end tell
+            end tell
+            """
+        case .safari:
+            sourceScript = """
+            tell application "Safari"
+                return source of front document
+            end tell
+            """
+        }
+
+        guard let source = runAppleScriptReturning(sourceScript),
+              source.contains("youtube.com") else { return nil }
+
+        // Strategy A: Parse videoId from ytInitialData JSON blob
+        // YouTube embeds search results as: "videoId":"XXXXXXXXXXX"
+        let videoIDPattern = #""videoId"\s*:\s*"([a-zA-Z0-9_-]{11})""#
+        if let regex = try? NSRegularExpression(pattern: videoIDPattern),
+           let match = regex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
+           let range = Range(match.range(at: 1), in: source) {
+            return String(source[range])
+        }
+
+        // Strategy B: Parse /watch?v= from href attributes
+        let watchPattern = #"/watch\?v=([a-zA-Z0-9_-]{11})"#
+        if let regex = try? NSRegularExpression(pattern: watchPattern),
+           let match = regex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
+           let range = Range(match.range(at: 1), in: source) {
+            return String(source[range])
+        }
+
+        return nil
     }
 
     /// Navigate the current active tab to a URL (instead of opening a new tab)
@@ -322,68 +366,6 @@ final class DirectActionExecutor {
         return false
     }
 
-    /// Extracts the first YouTube video URL from the current page source using AppleScript (no JS permissions needed).
-    private func extractFirstVideoURLFromPageSource(browser: BrowserType) -> String? {
-        let script: String
-        switch browser {
-        case .chrome:
-            script = """
-            tell application "Google Chrome"
-                tell active tab of front window
-                    return URL
-                end tell
-            end tell
-            """
-        case .safari:
-            script = """
-            tell application "Safari"
-                return URL of current tab of front window
-            end tell
-            """
-        }
-
-        // First verify we're on a YouTube search page
-        let currentURL = runAppleScriptReturning(script) ?? ""
-        guard currentURL.contains("youtube.com/results") else { return nil }
-
-        // Use JS to get the first video link — IIFE to ensure a return value
-        let jsScript = "(function(){var a=document.querySelector('a#video-title');if(a&&a.href)return a.href;var l=document.querySelectorAll('a');for(var i=0;i<l.length;i++){if(l[i].href&&l[i].href.indexOf('/watch?v=')>-1)return l[i].href}return ''})()"
-        let result = executeJSInBrowser(jsScript, browser: browser)
-        if !result.isEmpty && result.contains("/watch?v=") {
-            return result
-        }
-
-        // Last resort: use AppleScript to get page source and regex-parse video URLs
-        let sourceScript: String
-        switch browser {
-        case .chrome:
-            sourceScript = """
-            tell application "Google Chrome"
-                tell active tab of front window
-                    return execute javascript "document.documentElement.outerHTML.substring(0,50000)"
-                end tell
-            end tell
-            """
-        case .safari:
-            sourceScript = """
-            tell application "Safari"
-                return source of front document
-            end tell
-            """
-        }
-
-        guard let source = runAppleScriptReturning(sourceScript) else { return nil }
-
-        // Parse first /watch?v= URL from page source
-        let pattern = #"/watch\?v=[a-zA-Z0-9_-]{11}"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
-              let range = Range(match.range, in: source) else {
-            return nil
-        }
-
-        return "https://www.youtube.com\(source[range])"
-    }
 
     private func executeJSInBrowser(_ js: String, browser: BrowserType) -> String {
         // Collapse to single line and escape for AppleScript string embedding
