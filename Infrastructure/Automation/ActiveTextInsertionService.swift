@@ -22,6 +22,9 @@ final class ActiveTextInsertionService: TextInsertionService {
         await waitForModifierKeysReleased(timeout: 1.0)
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms after release
 
+        // Small delay to ensure clipboard content is fully registered
+        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+
         // Try CGEvent-based Cmd+V first (requires Accessibility permission)
         if AXIsProcessTrusted() {
             // Use a private event source so our Cmd+V isn't combined with
@@ -32,8 +35,10 @@ final class ActiveTextInsertionService: TextInsertionService {
                 keyDown.flags = .maskCommand
                 keyUp.flags = .maskCommand
                 keyDown.post(tap: .cghidEventTap)
-                try? await Task.sleep(nanoseconds: 30_000_000) // 30ms between down/up
+                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms between down/up
                 keyUp.post(tap: .cghidEventTap)
+                // Wait for target app to process the paste before returning
+                try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
                 return
             }
         }
