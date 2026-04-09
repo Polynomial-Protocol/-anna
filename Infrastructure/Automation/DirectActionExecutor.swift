@@ -15,6 +15,10 @@ final class DirectActionExecutor {
             return try executeSystemControl(command)
         case .playOnYouTube(let query):
             return await executePlayOnYouTube(query)
+        case .playOnSpotify(let query):
+            return executePlayOnSpotify(query)
+        case .playOnAppleMusic(let query):
+            return executePlayOnAppleMusic(query)
         case .searchWeb(let query):
             return executeSearchWeb(query)
         case .openURL(let url):
@@ -25,45 +29,61 @@ final class DirectActionExecutor {
     // MARK: - YouTube Playback
 
     private func executePlayOnYouTube(_ query: String) async -> AutomationOutcome {
-        // Build a smart search query
         let searchTerms = improveYouTubeQuery(query)
         guard let encoded = searchTerms.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             return .blocked(summary: "Could not encode query.")
         }
 
         let searchURL = "https://www.youtube.com/results?search_query=\(encoded)"
-
-        // Open the search page in the browser
         let browser = detectBrowser()
         let opened = openURLInBrowser(searchURL, browser: browser)
         guard opened else {
             return .blocked(summary: "Could not open browser.")
         }
 
-        // Wait for the page to load, then click the first video
-        try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+        // Try multiple times with increasing delays to find and play the first video
+        for attempt in 0..<3 {
+            let delay: UInt64 = UInt64(3 + attempt * 2) * 1_000_000_000
+            try? await Task.sleep(nanoseconds: delay)
 
-        // Use JavaScript to click the first video result
-        let clickJS = """
-        (function() {
-            // Try to find the first video link
-            var link = document.querySelector('a#video-title');
-            if (link) { link.click(); return 'clicked'; }
-            // Fallback: first thumbnail
-            var thumb = document.querySelector('a#thumbnail');
-            if (thumb) { thumb.click(); return 'clicked_thumb'; }
-            return 'not_found';
-        })()
-        """
+            // Strategy 1: JS extraction (most reliable when JS is enabled)
+            let extractJS = "(function(){var a=document.querySelector('a#video-title');if(a&&a.href)return a.href;var b=document.querySelectorAll('a');for(var i=0;i<b.length;i++){if(b[i].href&&b[i].href.indexOf('/watch?v=')>-1)return b[i].href}return ''})()"
+            let videoURL = executeJSInBrowser(extractJS, browser: browser)
 
-        let result = executeJSInBrowser(clickJS, browser: browser)
+            if !videoURL.isEmpty && videoURL.contains("/watch?v=") {
+                // Navigate to the video in the SAME tab (not a new one)
+                navigateCurrentTab(to: videoURL, browser: browser)
+                return .completed(summary: "Playing \"\(query)\" on YouTube.", openedURL: URL(string: videoURL))
+            }
 
-        if result.contains("clicked") {
-            return .completed(summary: "Playing \"\(query)\" on YouTube.", openedURL: URL(string: searchURL))
-        } else {
-            // Fallback: at least the search page is open
-            return .completed(summary: "Opened YouTube search for \"\(query)\". Couldn't auto-play first result.", openedURL: URL(string: searchURL))
+            // Strategy 2: Get page source and regex-parse
+            if let firstVideoURL = extractFirstVideoURLFromPageSource(browser: browser) {
+                navigateCurrentTab(to: firstVideoURL, browser: browser)
+                return .completed(summary: "Playing \"\(query)\" on YouTube.", openedURL: URL(string: firstVideoURL))
+            }
         }
+
+        return .completed(summary: "Opened YouTube search for \"\(query)\". Couldn't auto-play first result.", openedURL: URL(string: searchURL))
+    }
+
+    /// Navigate the current active tab to a URL (instead of opening a new tab)
+    private func navigateCurrentTab(to urlString: String, browser: BrowserType) {
+        let script: String
+        switch browser {
+        case .chrome:
+            script = """
+            tell application "Google Chrome"
+                set URL of active tab of front window to "\(urlString)"
+            end tell
+            """
+        case .safari:
+            script = """
+            tell application "Safari"
+                set URL of current tab of front window to "\(urlString)"
+            end tell
+            """
+        }
+        runAppleScript(script)
     }
 
     private func improveYouTubeQuery(_ query: String) -> String {
@@ -95,6 +115,54 @@ final class DirectActionExecutor {
             : .blocked(summary: "Could not open browser for search.")
     }
 
+    // MARK: - Spotify Playback
+
+    private func executePlayOnSpotify(_ query: String) -> AutomationOutcome {
+        // Use Spotify's search URI scheme: spotify:search:<query>
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            return .blocked(summary: "Could not encode query.")
+        }
+
+        // Try Spotify URI scheme first (opens directly in Spotify app)
+        if let spotifyURL = URL(string: "spotify:search:\(encoded)"),
+           NSWorkspace.shared.urlForApplication(toOpen: spotifyURL) != nil {
+            NSWorkspace.shared.open(spotifyURL)
+            return .completed(summary: "Searching \"\(query)\" in Spotify.", openedURL: spotifyURL)
+        }
+
+        // Fallback: open Spotify web search
+        let webURL = "https://open.spotify.com/search/\(encoded)"
+        let browser = detectBrowser()
+        let opened = openURLInBrowser(webURL, browser: browser)
+        return opened
+            ? .completed(summary: "Searching \"\(query)\" in Spotify.", openedURL: URL(string: webURL))
+            : .blocked(summary: "Could not open Spotify.")
+    }
+
+    // MARK: - Apple Music Playback
+
+    private func executePlayOnAppleMusic(_ query: String) -> AutomationOutcome {
+        // Use AppleScript to search and play in Music app
+        let escapedQuery = query.replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+        tell application "Music"
+            activate
+        end tell
+        """
+        runAppleScript(script)
+
+        // Open Apple Music web search as a reliable fallback
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            return .blocked(summary: "Could not encode query.")
+        }
+        let webURL = "https://music.apple.com/search?term=\(encoded)"
+        let browser = detectBrowser()
+        let opened = openURLInBrowser(webURL, browser: browser)
+        return opened
+            ? .completed(summary: "Searching \"\(query)\" in Apple Music.", openedURL: URL(string: webURL))
+            : .completed(summary: "Opened Music app for \"\(query)\".", openedURL: nil)
+    }
+
     // MARK: - Open URL
 
     private func executeOpenURL(_ url: String) -> AutomationOutcome {
@@ -117,7 +185,7 @@ final class DirectActionExecutor {
         case "play", "resume":
             keyCode = Int(NX_KEYTYPE_PLAY)
         case "pause", "stop":
-            keyCode = Int(NX_KEYTYPE_PLAY)
+            keyCode = Int(NX_KEYTYPE_PLAY) // Same key — NX_KEYTYPE_PLAY is a toggle
         case "next", "next track", "skip":
             keyCode = Int(NX_KEYTYPE_NEXT)
         case "previous", "previous track":
@@ -254,8 +322,74 @@ final class DirectActionExecutor {
         return false
     }
 
+    /// Extracts the first YouTube video URL from the current page source using AppleScript (no JS permissions needed).
+    private func extractFirstVideoURLFromPageSource(browser: BrowserType) -> String? {
+        let script: String
+        switch browser {
+        case .chrome:
+            script = """
+            tell application "Google Chrome"
+                tell active tab of front window
+                    return URL
+                end tell
+            end tell
+            """
+        case .safari:
+            script = """
+            tell application "Safari"
+                return URL of current tab of front window
+            end tell
+            """
+        }
+
+        // First verify we're on a YouTube search page
+        let currentURL = runAppleScriptReturning(script) ?? ""
+        guard currentURL.contains("youtube.com/results") else { return nil }
+
+        // Use JS to get the first video link — IIFE to ensure a return value
+        let jsScript = "(function(){var a=document.querySelector('a#video-title');if(a&&a.href)return a.href;var l=document.querySelectorAll('a');for(var i=0;i<l.length;i++){if(l[i].href&&l[i].href.indexOf('/watch?v=')>-1)return l[i].href}return ''})()"
+        let result = executeJSInBrowser(jsScript, browser: browser)
+        if !result.isEmpty && result.contains("/watch?v=") {
+            return result
+        }
+
+        // Last resort: use AppleScript to get page source and regex-parse video URLs
+        let sourceScript: String
+        switch browser {
+        case .chrome:
+            sourceScript = """
+            tell application "Google Chrome"
+                tell active tab of front window
+                    return execute javascript "document.documentElement.outerHTML.substring(0,50000)"
+                end tell
+            end tell
+            """
+        case .safari:
+            sourceScript = """
+            tell application "Safari"
+                return source of front document
+            end tell
+            """
+        }
+
+        guard let source = runAppleScriptReturning(sourceScript) else { return nil }
+
+        // Parse first /watch?v= URL from page source
+        let pattern = #"/watch\?v=[a-zA-Z0-9_-]{11}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
+              let range = Range(match.range, in: source) else {
+            return nil
+        }
+
+        return "https://www.youtube.com\(source[range])"
+    }
+
     private func executeJSInBrowser(_ js: String, browser: BrowserType) -> String {
-        let escapedJS = js.replacingOccurrences(of: "\\", with: "\\\\")
+        // Collapse to single line and escape for AppleScript string embedding
+        let singleLine = js.replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+        let escapedJS = singleLine.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
 
         let script: String
@@ -280,10 +414,14 @@ final class DirectActionExecutor {
             """
         }
 
-        let nsScript = NSAppleScript(source: script)
+        return runAppleScriptReturning(script) ?? ""
+    }
+
+    private func runAppleScriptReturning(_ source: String) -> String? {
+        let script = NSAppleScript(source: source)
         var error: NSDictionary?
-        let output = nsScript?.executeAndReturnError(&error)
-        return output?.stringValue ?? ""
+        let output = script?.executeAndReturnError(&error)
+        return output?.stringValue
     }
 
     @discardableResult

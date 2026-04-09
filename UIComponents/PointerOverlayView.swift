@@ -24,7 +24,6 @@ final class PointerOverlayManager: ObservableObject {
             panel = newPanel
         }
 
-        // Position the panel to cover the full screen
         if let screen = NSScreen.main {
             panel?.setFrame(screen.frame, display: true)
         }
@@ -77,87 +76,145 @@ struct PointerOverlayContent: View {
         GeometryReader { geo in
             if manager.isVisible, let coord = manager.coordinate {
                 let screenX = coord.x
-                // Flip Y coordinate (screen coords are bottom-up in AppKit)
                 let screenY = geo.size.height - coord.y
 
                 ZStack {
-                    // Blue triangle pointer
-                    PointerTriangleView()
+                    // Anna cursor pointer
+                    AnnaCursorView()
                         .position(x: screenX, y: screenY)
                         .transition(.scale.combined(with: .opacity))
 
                     // Label bubble
                     if !manager.bubbleText.isEmpty {
                         Text(manager.bubbleText)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .background(
                                 Capsule()
-                                    .fill(Color.blue.opacity(0.85))
-                                    .shadow(color: .blue.opacity(0.4), radius: 8)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Color(red: 0.55, green: 0.4, blue: 0.9).opacity(0.85),
+                                                Color(red: 0.45, green: 0.7, blue: 0.95).opacity(0.85)
+                                            ],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .shadow(color: Color(red: 0.55, green: 0.4, blue: 0.9).opacity(0.35), radius: 8)
                             )
-                            .position(x: screenX, y: screenY - 40)
+                            .position(x: screenX + 30, y: screenY + 50)
                             .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
                 }
-                .animation(.spring(response: 0.5, dampingFraction: 0.7), value: screenX)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7), value: screenY)
+                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: screenX)
+                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: screenY)
             }
         }
         .allowsHitTesting(false)
     }
 }
 
-// MARK: - Blue Triangle Shape
+// MARK: - Anna Cursor Design (Purple/Blue striped arrow with dark border)
 
-struct PointerTriangleView: View {
-    @State private var rotation: Double = 0
-    @State private var glowOpacity: Double = 0.6
+struct AnnaCursorView: View {
+    @State private var glowOpacity: Double = 0.4
+    @State private var appeared = false
+
+    // Colors matching the design
+    private let purple = Color(red: 0.68, green: 0.55, blue: 0.92)
+    private let lightBlue = Color(red: 0.52, green: 0.78, blue: 0.95)
+    private let borderColor = Color(red: 0.18, green: 0.18, blue: 0.2)
 
     var body: some View {
         ZStack {
-            // Glow effect
-            Triangle()
-                .fill(Color.blue.opacity(glowOpacity))
-                .frame(width: 36, height: 36)
-                .blur(radius: 12)
-
-            // Main triangle
-            Triangle()
+            // Outer glow
+            CursorArrowShape()
                 .fill(
                     LinearGradient(
-                        colors: [Color.blue, Color.blue.opacity(0.7)],
-                        startPoint: .top,
-                        endPoint: .bottom
+                        colors: [purple.opacity(glowOpacity), lightBlue.opacity(glowOpacity)],
+                        startPoint: .topTrailing,
+                        endPoint: .bottomLeading
                     )
                 )
-                .frame(width: 28, height: 28)
-                .overlay(
-                    Triangle()
-                        .stroke(Color.white.opacity(0.5), lineWidth: 1.5)
+                .frame(width: 48, height: 56)
+                .blur(radius: 16)
+
+            // Dark border (slightly larger)
+            CursorArrowShape()
+                .fill(borderColor)
+                .frame(width: 42, height: 50)
+                .shadow(color: .black.opacity(0.4), radius: 4, y: 2)
+
+            // Inner fill with diagonal stripes
+            CursorArrowShape()
+                .fill(
+                    LinearGradient(
+                        colors: [purple, lightBlue, purple],
+                        startPoint: .topTrailing,
+                        endPoint: .bottomLeading
+                    )
                 )
-                .shadow(color: .blue.opacity(0.5), radius: 6)
+                .frame(width: 32, height: 40)
+
+            // White diagonal stripe accent
+            CursorArrowShape()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            .clear,
+                            .white.opacity(0.5),
+                            .clear,
+                        ],
+                        startPoint: UnitPoint(x: 0.3, y: 0),
+                        endPoint: UnitPoint(x: 0.7, y: 1)
+                    )
+                )
+                .frame(width: 32, height: 40)
         }
-        .rotationEffect(.degrees(rotation))
+        .scaleEffect(appeared ? 1.0 : 0.3)
+        .opacity(appeared ? 1.0 : 0.0)
         .onAppear {
-            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-                glowOpacity = 1.0
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+                appeared = true
             }
-            withAnimation(.linear(duration: 0.5)) {
-                rotation = 180 // Point downward
+            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                glowOpacity = 0.7
             }
         }
     }
 }
 
-struct Triangle: Shape {
+// MARK: - Custom Arrow Cursor Shape
+
+struct CursorArrowShape: Shape {
     func path(in rect: CGRect) -> Path {
+        // Classic macOS cursor arrow shape with a notch
+        let w = rect.width
+        let h = rect.height
+
         var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+
+        // Tip of arrow (top-left)
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+
+        // Right edge down
+        path.addLine(to: CGPoint(x: rect.minX + w * 0.72, y: rect.minY + h * 0.58))
+
+        // Notch inward (where the tail meets the head)
+        path.addLine(to: CGPoint(x: rect.minX + w * 0.42, y: rect.minY + h * 0.52))
+
+        // Bottom tail point
+        path.addLine(to: CGPoint(x: rect.minX + w * 0.42, y: rect.maxY))
+
+        // Left side of tail
+        path.addLine(to: CGPoint(x: rect.minX + w * 0.18, y: rect.minY + h * 0.72))
+
+        // Back to left edge
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + h * 0.72))
+
         path.closeSubpath()
         return path
     }

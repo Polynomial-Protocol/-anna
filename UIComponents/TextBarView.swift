@@ -104,15 +104,15 @@ struct TextBarContent: View {
     var onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Image(systemName: viewModel.status == .thinking ? "brain" : "message")
-                .font(.system(size: 16))
+                .font(.system(size: 14))
                 .foregroundStyle(viewModel.status.color)
 
-            TextField("Ask Anna...", text: $inputText)
+            TextField("Hey Anna...", text: $inputText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 16))
-                .foregroundStyle(.white.opacity(0.92))
+                .font(.system(size: 14))
+                .foregroundStyle(.white.opacity(0.85))
                 .onSubmit {
                     guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                     viewModel.beginCapture(mode: .assistantCommand)
@@ -122,19 +122,19 @@ struct TextBarContent: View {
 
             if viewModel.status == .thinking {
                 ProgressView()
-                    .scaleEffect(0.7)
-                    .tint(.white)
+                    .scaleEffect(0.6)
+                    .tint(.white.opacity(0.5))
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .frame(width: 560)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(width: 520)
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.05), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(0.24), radius: 20, y: 10)
+        .shadow(color: .black.opacity(0.2), radius: 16, y: 8)
     }
 }

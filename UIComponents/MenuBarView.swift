@@ -7,136 +7,103 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            statusSection
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
+            // Status
+            HStack(spacing: 6) {
+                Circle().fill(vm.status.color).frame(width: 5, height: 5)
+                Text(vm.status.displayText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                Spacer()
+                if vm.isCapturing {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 10))
+                        .foregroundStyle(vm.status.color)
+                        .symbolEffect(.pulse)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 5)
 
-            Divider().opacity(0.06)
+            Rectangle().fill(.white.opacity(0.04)).frame(height: 1)
 
             HStack(spacing: 0) {
-                Text("Right ⌘ Agent")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                Text("Right \u{2318} Agent")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.25))
                 Spacer()
-                Text("Right ⌥ Dictation")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                Text("Right \u{2325} Dictation")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.25))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
 
-            Divider().opacity(0.06)
+            Rectangle().fill(.white.opacity(0.04)).frame(height: 1)
 
-            recentActivity
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-
-            Divider().opacity(0.06)
-
-            footerActions
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-        }
-        .frame(width: 280)
-    }
-
-    private var statusSection: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(vm.status.color)
-                .frame(width: 8, height: 8)
-
-            Text(vm.status.displayText)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.primary)
-
-            Spacer()
-
-            if vm.isCapturing {
-                Image(systemName: "waveform")
-                    .font(.caption)
-                    .foregroundStyle(vm.status.color)
-                    .symbolEffect(.pulse)
-            }
-        }
-    }
-
-    private var recentActivity: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Recent Activity")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            if vm.events.isEmpty {
-                Text("No actions yet")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            } else {
-                ForEach(vm.events.prefix(5)) { event in
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(toneColor(event.tone))
-                            .frame(width: 6, height: 6)
-                        Text(event.title)
-                            .font(.caption)
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        Spacer()
-                        Text(event.timestamp, style: .time)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+            // Recent
+            VStack(alignment: .leading, spacing: 3) {
+                if vm.events.isEmpty {
+                    Text("Nothing yet — say hi!")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.25))
+                } else {
+                    ForEach(vm.events.prefix(4)) { event in
+                        HStack(spacing: 5) {
+                            Circle().fill(toneColor(event.tone)).frame(width: 4, height: 4)
+                            Text(event.title)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(0.5))
+                                .lineLimit(1)
+                            Spacer()
+                            Text(event.timestamp, style: .time)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white.opacity(0.2))
+                        }
                     }
                 }
             }
-        }
-    }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
 
-    private var footerActions: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if !vm.lastTranscript.isEmpty {
+            Rectangle().fill(.white.opacity(0.04)).frame(height: 1)
+
+            VStack(alignment: .leading, spacing: 0) {
                 Button {
+                    NSApp.activate(ignoringOtherApps: true)
+                    if let w = NSApp.windows.first(where: { $0.title.contains("Anna") && $0.canBecomeMain }) {
+                        w.makeKeyAndOrderFront(nil)
+                    }
                 } label: {
-                    Label("Undo Last Text Insert", systemImage: "arrow.uturn.backward")
-                        .font(.caption)
+                    Label("Open Anna...", systemImage: "macwindow")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.5))
                 }
                 .buttonStyle(.plain)
-                .padding(.vertical, 4)
-            }
+                .padding(.vertical, 3)
 
-            Button {
-                NSApp.activate(ignoringOtherApps: true)
-                if let window = NSApp.windows.first(where: {
-                    $0.title.contains("Anna") && $0.canBecomeMain
-                }) {
-                    window.makeKeyAndOrderFront(nil)
+                Rectangle().fill(.white.opacity(0.04)).frame(height: 1)
+
+                Button { NSApp.terminate(nil) } label: {
+                    Label("Quit", systemImage: "power")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.4))
                 }
-            } label: {
-                Label("Open Anna...", systemImage: "macwindow")
-                    .font(.caption)
+                .buttonStyle(.plain)
+                .padding(.vertical, 3)
             }
-            .buttonStyle(.plain)
-            .padding(.vertical, 4)
-
-            Divider().opacity(0.06)
-
-            Button {
-                NSApp.terminate(nil)
-            } label: {
-                Label("Quit Anna", systemImage: "power")
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
         }
+        .frame(width: 240)
     }
 
     private func toneColor(_ tone: AssistantEvent.EventTone) -> Color {
         switch tone {
-        case .neutral: return .secondary
-        case .success: return AnnaPalette.mint
-        case .warning: return AnnaPalette.warning
-        case .failure: return .red
+        case .neutral: return .white.opacity(0.2)
+        case .success: return Color(hex: "69D3B0")
+        case .warning: return Color(hex: "FFC764")
+        case .failure: return .red.opacity(0.7)
         }
     }
 }

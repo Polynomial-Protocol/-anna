@@ -12,7 +12,8 @@ struct RootContentView: View {
                     assistantViewModel: container.assistantViewModel,
                     permissionsViewModel: container.permissionsViewModel,
                     settingsViewModel: container.settingsViewModel,
-                    logger: container.logger
+                    logger: container.logger,
+                    knowledgeStore: container.knowledgeStore
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {

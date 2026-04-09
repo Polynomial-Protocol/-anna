@@ -5,13 +5,13 @@ struct GlassPanel<Content: View>: View {
 
     var body: some View {
         content
-            .padding(20)
+            .padding(16)
             .background(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(AnnaPalette.panel)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color.white.opacity(0.05), lineWidth: 0.5)
                     )
             )
     }

@@ -1,7 +1,7 @@
 import Foundation
 
-/// Ensures a clean slate on fresh installs by detecting when the app has been
-/// reinstalled and clearing any stale UserDefaults / cached state.
+/// Detects fresh installs and version upgrades. Runs migrations on upgrade,
+/// but NEVER wipes user data.
 enum CleanInstallHelper {
 
     private static let lastKnownVersionKey = "anna_lastKnownBuildVersion"
@@ -14,13 +14,14 @@ enum CleanInstallHelper {
         let hasLaunchedBefore = defaults.bool(forKey: firstLaunchCompleteKey)
         let previousBuild = defaults.string(forKey: lastKnownVersionKey)
 
-        if !hasLaunchedBefore || previousBuild != currentBuild {
-            if let bundleID = Bundle.main.bundleIdentifier {
-                defaults.removePersistentDomain(forName: bundleID)
-            }
+        if !hasLaunchedBefore {
+            // Genuine first install — no data to preserve
             defaults.set(true, forKey: firstLaunchCompleteKey)
             defaults.set(currentBuild, forKey: lastKnownVersionKey)
-            defaults.synchronize()
+        } else if previousBuild != currentBuild {
+            // App was updated — run migrations, preserve all user data
+            MigrationManager.migrateIfNeeded(from: previousBuild ?? "0", to: currentBuild)
+            defaults.set(currentBuild, forKey: lastKnownVersionKey)
         }
     }
 }

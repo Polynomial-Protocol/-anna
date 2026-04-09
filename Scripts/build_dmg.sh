@@ -35,6 +35,8 @@ xcodebuild \
   -configuration Release \
   -destination "generic/platform=macOS" \
   -archivePath "$ARCHIVE_PATH" \
+  ARCHS=arm64 \
+  ONLY_ACTIVE_ARCH=NO \
   archive
 
 APP_PATH="$ARCHIVE_PATH/Products/Applications/Anna.app"

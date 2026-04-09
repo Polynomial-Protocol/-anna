@@ -5,198 +5,209 @@ struct OnboardingView: View {
     @ObservedObject var permissionsViewModel: PermissionsViewModel
     @ObservedObject var speechModelViewModel: SpeechModelViewModel
 
+    @State private var appeared = false
+
     var body: some View {
         ZStack {
-            AnnaPalette.canvas.ignoresSafeArea()
+            Color(red: 0.06, green: 0.06, blue: 0.08)
+                .ignoresSafeArea()
 
-            HStack(spacing: 0) {
-                leftColumn
-                rightColumn
-            }
-            .padding(30)
-        }
-    }
+            VStack(spacing: 0) {
+                Spacer()
 
-    private var leftColumn: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("Anna")
-                .font(.system(size: 72, weight: .black))
-                .foregroundStyle(.white.opacity(0.92))
-
-            Text("A smart assistant for your Mac that listens on demand, teaches you how things work, guides you visually, and stays visible only through your menu bar.")
-                .font(.title2.weight(.medium))
-                .foregroundStyle(.white.opacity(0.7))
-                .frame(maxWidth: 560, alignment: .leading)
-
-            // Progress dots
-            HStack(spacing: 6) {
-                ForEach(0..<2, id: \.self) { step in
-                    Capsule()
-                        .fill(step <= state.currentStep ? AnnaPalette.accent : Color.white.opacity(0.12))
-                        .frame(width: step == state.currentStep ? 28 : 8, height: 8)
-                        .animation(.spring(response: 0.35), value: state.currentStep)
-                }
-            }
-            .padding(.vertical, 4)
-
-            // Steps
-            VStack(alignment: .leading, spacing: 16) {
-                onboardingStep(
-                    index: 1,
-                    title: "Hold to talk",
-                    body: "Hold Right ⌘ to give Anna a task. Hold Right ⌥ to dictate into the focused field."
-                )
-                onboardingStep(
-                    index: 2,
-                    title: "Visual guidance",
-                    body: "Anna points at UI elements on your screen with a blue cursor to show you exactly where to click."
-                )
-                onboardingStep(
-                    index: 3,
-                    title: "Grant permissions",
-                    body: "Microphone, Accessibility, Screen Recording, and Automation — each unlocks a capability."
-                )
-                onboardingStep(
-                    index: 4,
-                    title: "Voice responses",
-                    body: "Anna speaks her responses aloud so you can keep your eyes on what you're doing."
-                )
-            }
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(AnnaPalette.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                    )
-            )
-
-            HStack(spacing: 14) {
-                Button("Continue to Permission Setup") {
-                    withAnimation(.spring(response: 0.35)) {
-                        state.currentStep = 1
+                Group {
+                    switch state.currentStep {
+                    case 0: welcomeStep
+                    case 1: permissionsStep
+                    default: readyStep
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AnnaPalette.accent)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(y: 16)),
+                    removal: .opacity.combined(with: .offset(y: -8))
+                ))
 
-                Button("Skip for now") {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        state.isComplete = true
-                    }
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, 28)
-    }
+                Spacer()
 
-    private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(state.currentStep == 0 ? "First-run brief" : "Permission center")
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.white.opacity(0.92))
-
-            if state.currentStep == 0 {
-                Text("Anna starts with a calm introduction instead of asking for every permission at once.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.6))
-                StatusPill(text: "Direct distribution", color: AnnaPalette.warning)
-                StatusPill(text: "Voice + Visual guidance", color: AnnaPalette.copper)
-                StatusPill(text: "Confirmation before purchases", color: AnnaPalette.mint)
-                modelDownloadCard
-            } else {
-                PermissionCenterView(viewModel: permissionsViewModel)
-                modelDownloadCard
+                // Bottom
                 HStack {
-                    Spacer()
-                    Button("Finish setup") {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            state.isComplete = true
+                    HStack(spacing: 6) {
+                        ForEach(0..<OnboardingState.totalSteps, id: \.self) { i in
+                            Circle()
+                                .fill(i == state.currentStep ? .white.opacity(0.7) : .white.opacity(0.12))
+                                .frame(width: 5, height: 5)
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AnnaPalette.accent)
+                    Spacer()
+                    if state.currentStep == 1 {
+                        Button("Skip") {
+                            withAnimation(.easeInOut(duration: 0.25)) { state.isComplete = true }
+                        }
+                        .buttonStyle(OnboardingGhostButton())
+                    }
+                    Button(state.currentStep == OnboardingState.totalSteps - 1 ? "Start" : "Continue") {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            if state.currentStep >= OnboardingState.totalSteps - 1 {
+                                state.isComplete = true
+                            } else {
+                                state.currentStep += 1
+                            }
+                        }
+                    }
+                    .buttonStyle(OnboardingPillButton())
                 }
             }
+            .frame(maxWidth: 440)
+            .padding(.horizontal, 40)
+            .padding(.vertical, 28)
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(AnnaPalette.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                )
-        )
-        .frame(width: 440)
+        .opacity(appeared ? 1 : 0)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.5)) { appeared = true }
+        }
     }
 
-    private var modelDownloadCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Speech model")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.white.opacity(0.92))
-            Text("Parakeet v2 English via FluidAudio. Best recall for fast command routing on Apple Silicon.")
+    // MARK: - Welcome
+
+    private var welcomeStep: some View {
+        VStack(spacing: 24) {
+            Text("anna")
+                .font(.system(size: 48, weight: .thin))
+                .tracking(6)
+                .foregroundStyle(.white.opacity(0.88))
+
+            Rectangle().fill(.white.opacity(0.1)).frame(width: 24, height: 1)
+
+            Text("your AI friend, right here on your mac")
+                .font(.system(size: 14))
+                .foregroundStyle(.white.opacity(0.4))
+                .tracking(0.5)
+
+            VStack(spacing: 0) {
+                hintRow("Right \u{2318}", "Hold to talk")
+                hintRow("Right \u{2325}", "Dictation")
+            }
+            .padding(.top, 8)
+        }
+    }
+
+    // MARK: - Permissions
+
+    private var permissionsStep: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Permissions")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(.white.opacity(0.85))
+
+            Text("I just need a few things to help you out.")
                 .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.6))
-            StatusPill(
-                text: speechModelViewModel.status.state.rawValue.capitalized,
-                color: color(for: speechModelViewModel.status.state)
-            )
-            Text(speechModelViewModel.status.detail)
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.45))
-            HStack {
-                Button("Download Parakeet") {
-                    speechModelViewModel.download()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(AnnaPalette.accent)
+                .foregroundStyle(.white.opacity(0.35))
 
-                Button("Refresh") {
-                    Task { await speechModelViewModel.refresh() }
+            VStack(spacing: 1) {
+                ForEach(permissionsViewModel.statuses) { s in
+                    permRow(s)
                 }
-                .buttonStyle(.bordered)
             }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.07))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                )
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func onboardingStep(index: Int, title: String, body: String) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            Text("\(index)")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(AnnaPalette.accent, in: Circle())
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-                Text(body)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.6))
-            }
+    // MARK: - Ready
+
+    private var readyStep: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 20, weight: .light))
+                .foregroundStyle(.white.opacity(0.5))
+
+            Text("We're good to go.")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(.white.opacity(0.85))
+
+            Text("Hold Right \u{2318} anytime — I'm here.")
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.35))
         }
     }
 
-    private func color(for state: SpeechModelState) -> Color {
-        switch state {
-        case .ready: return AnnaPalette.mint
-        case .downloading: return AnnaPalette.copper
-        case .failed: return .red
-        case .notInstalled: return AnnaPalette.warning
+    // MARK: - Rows
+
+    private func hintRow(_ key: String, _ label: String) -> some View {
+        HStack(spacing: 12) {
+            Text(key)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.3))
+                .frame(width: 64, alignment: .trailing)
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.55))
+            Spacer()
         }
+        .padding(.vertical, 6)
+    }
+
+    private func permRow(_ status: PermissionStatus) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: permIcon(status.kind))
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.4))
+                .frame(width: 18)
+            Text(status.kind.displayName)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.7))
+            Spacer()
+            if status.state == .granted {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color(hex: "69D3B0"))
+            } else {
+                Button {
+                    permissionsViewModel.request(status.kind)
+                } label: {
+                    Text("Grant")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(.white.opacity(0.07), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.white.opacity(0.03))
+    }
+
+    private func permIcon(_ kind: PermissionKind) -> String {
+        switch kind {
+        case .microphone: return "mic"
+        case .accessibility: return "hand.point.up.left"
+        case .automation: return "gearshape.2"
+        case .screenRecording: return "rectangle.dashed.badge.record"
+        }
+    }
+}
+
+// MARK: - Button Styles
+
+private struct OnboardingPillButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.white.opacity(0.85))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 7)
+            .background(.white.opacity(configuration.isPressed ? 0.06 : 0.1), in: Capsule())
+    }
+}
+
+private struct OnboardingGhostButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13))
+            .foregroundStyle(.white.opacity(configuration.isPressed ? 0.2 : 0.3))
+            .padding(.trailing, 8)
     }
 }

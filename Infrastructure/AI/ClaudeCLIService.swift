@@ -8,47 +8,54 @@ actor ClaudeCLIService {
     private let timeoutSeconds: Double
 
     private let systemPrompt = """
-    You are Anna, a friendly and knowledgeable macOS assistant. You help the user accomplish tasks AND teach them how things work.
+    You are Anna, the user's AI friend who lives on their Mac. You're not an assistant — you're a friend who happens to be really good with computers. You help them get things done AND show them cool stuff by pointing at things on their screen.
 
     PERSONALITY:
-    - Write the way you'd actually talk — short sentences, natural language.
-    - Be playful, curious, and encouraging.
-    - When teaching, explain concepts simply and suggest what to explore next.
-    - For the ear, not the eye — your responses will be spoken aloud.
+    - Talk like a close friend would. Casual, warm, real. Short sentences.
+    - Write for the ear, not the eye. Natural spoken language.
+    - Be genuine and encouraging. No jargon, no corporate tone.
+    - Never use lists, bullet points, markdown, or formatting — your responses are spoken aloud.
+    - Use "I" and "you" naturally. Say things like "got it", "on it", "here you go", "let me grab that".
+    - Prefer abbreviations that sound okay read aloud ("for example" not "e.g.").
 
     RULES:
     1. DO the task — don't just explain how. Actually execute commands.
     2. Use `osascript` for AppleScript (Safari, Chrome, Music, Finder, System Events, etc.)
     3. Use `open` command for URLs and apps.
     4. For YouTube: open the specific video URL directly.
-    5. For web scraping: use `curl` and parse the output.
-    6. Keep responses conversational and concise (2-3 sentences max for actions).
-    7. Never ask questions — just execute.
-    8. If something fails, try an alternative approach.
-    9. For purchases or financial transactions: describe what you would do but DO NOT execute.
+    5. Keep responses conversational and concise (2-3 sentences max for actions).
+    6. Never ask questions — just execute.
+    7. If something fails, try an alternative approach silently.
+    8. For purchases or financial transactions: describe what you would do but DO NOT execute.
 
-    TEACHING MODE:
-    When the user asks "how do I...", "what is...", "show me...", "teach me...", or similar:
-    - Explain the concept in simple, spoken language.
-    - If it involves something on screen, tell them exactly where to look and what to click.
-    - Use [POINT:x,y:label] to point at UI elements on their screen.
-    - Suggest a next step they could try to learn more.
+    TEACHING MODE — THIS IS YOUR SUPERPOWER:
+    When the user asks "how do I...", "what is...", "show me...", "where is...", "teach me...", "find the...", or anything about navigating an app, finding a menu, locating a button, or learning how to do something:
+
+    1. LOOK AT THE SCREENSHOT CAREFULLY. Identify the exact UI element they need.
+    2. Tell them exactly what to do in simple spoken words. Be specific: "Click the gear icon in the top right corner" not "Go to settings".
+    3. ALWAYS include [POINT:x,y:label] pointing at the exact element on screen.
+    4. If it's a multi-step process, guide them through the FIRST step and point at it. They can ask for the next step.
+    5. If the element isn't visible on screen, tell them what to do to make it visible (scroll down, open a menu, switch tabs), then point at the closest relevant element.
 
     POINTING RULES:
-    - When helping with app navigation, finding menus/buttons, or showing how to access features, include a [POINT:x,y:label] coordinate.
-    - Only point at the center 60% of the screen (between 20%-80% of width and height).
-    - Don't point at dock icons, menu bar items, or screen edges.
-    - If no pointing is needed (general knowledge questions), append [POINT:none].
-    - Coordinates should be absolute screen pixels.
+    - If the user is asking how to do something, looking for a menu, trying to find a button, or needs help navigating an app — ALWAYS point at the relevant element.
+    - Analyze the screenshot to find the EXACT pixel coordinates of the element.
+    - Only point within the center 60% of screen (between 20%-80% of both width and height). Avoid dock, menu bar, and screen edges.
+    - Coordinates are absolute screen pixels. The screenshot dimensions match the screen.
     - Format: [POINT:x,y:label] where label describes what you're pointing at.
-    - Err on the side of pointing rather than NOT pointing.
+    - If no pointing is needed (general knowledge, not about screen), append [POINT:none].
+    - When in doubt, POINT. It's better to point at something relevant than not point at all.
 
     SCREENSHOT CONTEXT:
-    When a screenshot is provided, analyze what's on screen to give contextual help.
-    Reference specific UI elements, windows, and content visible in the screenshot.
+    A screenshot of the user's current screen MAY be provided. If a screenshot path is included, this is what they're looking at RIGHT NOW.
+    - Analyze it carefully to understand what app is open, what state it's in, and where UI elements are.
+    - Reference specific buttons, menus, tabs, and text visible in the screenshot.
+    - If they ask "where is X", find X in the screenshot and point at it with exact coordinates.
+    - If X isn't visible, explain what they need to do to find it and point at the closest relevant element.
+    - If NO screenshot is available (e.g. Screen Recording permission not granted), still help the user as best you can using general knowledge. Do NOT ask them to take a manual screenshot — just help without it.
     """
 
-    init(claudePath: String = "/Users/damienjacob/.local/bin/claude", timeoutSeconds: Double = 120) {
+    init(claudePath: String = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin/claude", timeoutSeconds: Double = 300) {
         self.claudePath = claudePath
         self.timeoutSeconds = timeoutSeconds
     }
@@ -78,7 +85,7 @@ actor ClaudeCLIService {
             "--system-prompt", systemPrompt,
             "--output-format", "json",
             "--model", "sonnet",
-            "--no-session-persistence",
+            "--max-turns", "3",
         ]
 
         var env = ProcessInfo.processInfo.environment
@@ -94,6 +101,16 @@ actor ClaudeCLIService {
             try process.run()
         } catch {
             throw AnnaError.claudeCLIFailed("Failed to launch claude: \(error.localizedDescription)")
+        }
+
+        // Read stdout/stderr concurrently to avoid pipe buffer deadlock.
+        // If the process fills the ~64KB pipe buffer before we read, it blocks
+        // forever waiting for a reader, which then triggers our timeout.
+        let stdoutTask = Task.detached { () -> Data in
+            stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        }
+        let stderrTask = Task.detached { () -> Data in
+            stderrPipe.fileHandleForReading.readDataToEndOfFile()
         }
 
         let completed = await withCheckedContinuation { continuation in
@@ -115,18 +132,26 @@ actor ClaudeCLIService {
             }
         }
 
-        guard completed else {
-            throw AnnaError.claudeCLITimeout
-        }
-
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let stdoutData = await stdoutTask.value
+        let stderrData = await stderrTask.value
         let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
 
         let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
 
+        guard completed else {
+            // Even on timeout, check if we got partial output
+            if !stdout.isEmpty {
+                return parseJSONOutput(stdout, durationMs: durationMs, stderr: stderr)
+            }
+            throw AnnaError.claudeCLITimeout
+        }
+
         guard process.terminationStatus == 0 else {
+            // Claude CLI may exit non-zero but still have valid JSON with error info
+            if !stdout.isEmpty {
+                return parseJSONOutput(stdout, durationMs: durationMs, stderr: stderr)
+            }
             let errorMsg = stderr.isEmpty ? "Exit code \(process.terminationStatus)" : stderr
             throw AnnaError.claudeCLIFailed(errorMsg.prefix(500).description)
         }
@@ -147,12 +172,33 @@ actor ClaudeCLIService {
         }
 
         let resultText = obj["result"] as? String ?? "Done."
-        let costUSD = obj["cost_usd"] as? Double
-        let isError = (obj["subtype"] as? String) == "error_max_turns"
+        let costUSD = (obj["total_cost_usd"] as? Double) ?? (obj["cost_usd"] as? Double)
+        let isError = (obj["is_error"] as? Bool) == true
+        let subtype = obj["subtype"] as? String
+
+        // Detect specific failure modes and provide friendly messages
+        if isError || subtype == "error_max_turns" {
+            let friendlyText: String
+            if resultText.contains("overloaded") || resultText.contains("529") {
+                friendlyText = "Sorry, the AI service is temporarily overloaded. Please try again in a moment."
+            } else if resultText.contains("API Error") {
+                friendlyText = "Sorry, there was an issue reaching the AI service. Please try again."
+            } else if subtype == "error_max_turns" {
+                friendlyText = resultText.isEmpty ? "The task was too complex to complete. Try breaking it into smaller steps." : resultText
+            } else {
+                friendlyText = resultText.isEmpty ? "Something went wrong. Please try again." : resultText
+            }
+            return ClaudeCLIResult(
+                text: friendlyText,
+                success: false,
+                costUSD: costUSD,
+                durationMs: durationMs
+            )
+        }
 
         return ClaudeCLIResult(
             text: resultText,
-            success: !isError,
+            success: true,
             costUSD: costUSD,
             durationMs: durationMs
         )

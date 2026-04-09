@@ -34,8 +34,8 @@ final class ResponseBubbleController: ObservableObject {
     @Published var isVisible = false
 
     private var panel: ResponseBubblePanel?
-    private let panelWidth: CGFloat = 390
-    private let panelHeight: CGFloat = 300
+    private let panelWidth: CGFloat = 360
+    private let panelHeight: CGFloat = 260
 
     func show(viewModel: AssistantViewModel) {
         guard panel == nil else {
@@ -46,26 +46,18 @@ final class ResponseBubbleController: ObservableObject {
 
         let frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
         let newPanel = ResponseBubblePanel(contentRect: frame)
+        newPanel.contentView = NSHostingView(rootView: ResponseBubbleContent(viewModel: viewModel))
 
-        let hostView = NSHostingView(
-            rootView: ResponseBubbleContent(viewModel: viewModel)
-        )
-        newPanel.contentView = hostView
-
-        // Position near top-right of the current screen (multi-monitor aware)
         let screen = NSScreen.main ?? NSScreen.screens.first
-        if let screenFrame = screen?.visibleFrame {
-            let x = screenFrame.maxX - panelWidth - 16
-            let y = screenFrame.maxY - panelHeight - 8
-            newPanel.setFrameOrigin(NSPoint(x: x, y: y))
+        if let sf = screen?.visibleFrame {
+            newPanel.setFrameOrigin(NSPoint(x: sf.maxX - panelWidth - 16, y: sf.maxY - panelHeight - 8))
         }
 
-        // Animate in
         newPanel.alphaValue = 0
         newPanel.orderFront(nil)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.3
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.25
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             newPanel.animator().alphaValue = 1.0
         }
 
@@ -74,234 +66,143 @@ final class ResponseBubbleController: ObservableObject {
     }
 
     func hide() {
-        guard let existingPanel = panel else { return }
-
-        // Animate out
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.25
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            existingPanel.animator().alphaValue = 0
+        guard let p = panel else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.2
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            p.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
-            existingPanel.orderOut(nil)
-            existingPanel.close()
-            self?.panel = nil
+            p.orderOut(nil); p.close(); self?.panel = nil
         })
         isVisible = false
     }
 }
 
-// MARK: - Bubble Content View
+// MARK: - Content
 
 struct ResponseBubbleContent: View {
     @ObservedObject var viewModel: AssistantViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Status pill
-            HStack(spacing: 8) {
+            // Status
+            HStack(spacing: 6) {
                 Circle()
                     .fill(viewModel.status.color)
-                    .frame(width: 8, height: 8)
-
+                    .frame(width: 6, height: 6)
                 Text(viewModel.status.displayText)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
                 Spacer()
-
                 if viewModel.isCapturing {
                     Image(systemName: "waveform")
-                        .font(.system(size: 14))
+                        .font(.system(size: 12))
                         .foregroundStyle(viewModel.status.color)
                         .symbolEffect(.pulse)
                 }
-
                 if viewModel.status == .speaking {
-                    Button {
-                        viewModel.stopSpeaking()
-                    } label: {
+                    Button { viewModel.stopSpeaking() } label: {
                         Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.white.opacity(0.7))
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.4))
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
 
-            Divider().overlay(Color.white.opacity(0.06))
+            Rectangle().fill(.white.opacity(0.04)).frame(height: 1)
 
-            // Content area
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
                     if viewModel.isCapturing {
-                        listeningIndicator
+                        HStack(spacing: 8) {
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.red.opacity(0.7))
+                                .symbolEffect(.pulse)
+                            Text(viewModel.activeMode == .assistantCommand ? "I'm listening..." : "Go ahead, I'll type...")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
 
                     if !viewModel.lastTranscript.isEmpty {
-                        transcriptBubble
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("You")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.3))
+                            Text(viewModel.lastTranscript)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
 
-                    // Streaming response
                     if !viewModel.streamingText.isEmpty {
-                        streamingResponseBubble
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Anna")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.3))
+                            Text(viewModel.streamingText)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white.opacity(0.65))
+                                .animation(.easeIn(duration: 0.05), value: viewModel.streamingText)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
 
-                    // Last event result
                     if let event = viewModel.events.first, viewModel.streamingText.isEmpty {
-                        resultBubble(event)
+                        HStack(alignment: .top, spacing: 6) {
+                            Circle()
+                                .fill(toneColor(event.tone))
+                                .frame(width: 5, height: 5)
+                                .padding(.top, 4)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(event.title)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                Text(event.body)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.white.opacity(0.45))
+                                    .lineLimit(3)
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                 }
-                .padding(16)
+                .padding(12)
             }
-            .frame(maxHeight: .infinity)
         }
-        .frame(width: 390, height: 300)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(AnnaPalette.pane)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                )
-                .shadow(color: .black.opacity(0.35), radius: 20)
-        )
-    }
-
-    private var listeningIndicator: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "mic.fill")
-                .font(.system(size: 16))
-                .foregroundStyle(.red)
-                .symbolEffect(.pulse)
-
-            Text(viewModel.activeMode == .assistantCommand ? "Listening for command..." : "Listening for dictation...")
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.8))
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: 360, height: 260)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.07))
+                .fill(Color(red: 0.08, green: 0.08, blue: 0.10))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                        .stroke(.white.opacity(0.06), lineWidth: 0.5)
                 )
-        )
-        .transition(.opacity.combined(with: .scale(scale: 0.95)))
-    }
-
-    private var transcriptBubble: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("You said:")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.5))
-                Spacer()
-                if let time = viewModel.lastTranscriptTime {
-                    Text(AssistantViewModel.timeFormatter.string(from: time))
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.35))
-                }
-            }
-
-            Text(viewModel.lastTranscript)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.92))
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(LinearGradient(
-                    colors: [AnnaPalette.userGradientStart, AnnaPalette.userGradientEnd],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                )
-        )
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
-    }
-
-    private var streamingResponseBubble: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.caption)
-                    .foregroundStyle(.purple)
-                Text("Anna")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.purple.opacity(0.8))
-                Spacer()
-                if let time = viewModel.lastResponseTime {
-                    Text(AssistantViewModel.timeFormatter.string(from: time))
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.35))
-                }
-            }
-
-            Text(viewModel.streamingText)
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.85))
-                .animation(.easeIn(duration: 0.05), value: viewModel.streamingText)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.purple.opacity(0.12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.purple.opacity(0.2), lineWidth: 0.5)
-                )
-        )
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
-    }
-
-    private func resultBubble(_ event: AssistantEvent) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(toneColor(event.tone))
-                    .frame(width: 6, height: 6)
-                Text(event.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.7))
-                Spacer()
-                Text(AssistantViewModel.timeFormatter.string(from: event.timestamp))
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.35))
-            }
-
-            Text(event.body)
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.8))
-                .lineLimit(4)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.07))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                )
+                .shadow(color: .black.opacity(0.4), radius: 16)
         )
     }
 
     private func toneColor(_ tone: AssistantEvent.EventTone) -> Color {
         switch tone {
-        case .neutral: return .secondary
-        case .success: return AnnaPalette.mint
-        case .warning: return AnnaPalette.warning
-        case .failure: return .red
+        case .neutral: return .white.opacity(0.2)
+        case .success: return Color(hex: "69D3B0")
+        case .warning: return Color(hex: "FFC764")
+        case .failure: return .red.opacity(0.7)
         }
     }
 }

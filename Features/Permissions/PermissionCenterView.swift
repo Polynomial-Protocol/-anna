@@ -5,73 +5,85 @@ struct PermissionCenterView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 20) {
                 Text("Permissions")
-                    .font(.system(size: 34, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
 
-                Text("Anna asks for permissions only because each one unlocks a concrete capability.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.6))
-
-                ForEach(viewModel.statuses) { status in
-                    permissionCard(status)
-                }
-            }
-            .padding(28)
-        }
-        .background(AnnaPalette.pane)
-    }
-
-    private func permissionCard(_ status: PermissionStatus) -> some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(status.kind.displayName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-                Text(status.kind.reason)
+                Text("I need a few permissions to help you out. Nothing shady, promise.")
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.6))
-                Text(status.detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.45))
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 10) {
-                StatusPill(text: status.state.rawValue.capitalized, color: color(for: status.state))
-                Button("Request") {
-                    viewModel.request(status.kind)
+                    .foregroundStyle(.white.opacity(0.35))
+
+                VStack(spacing: 1) {
+                    ForEach(viewModel.statuses) { status in
+                        permRow(status)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                Button("Open Settings") {
-                    viewModel.openSettings(for: status.kind)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
+            .padding(24)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(AnnaPalette.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                )
-        )
     }
 
-    private func color(for state: PermissionState) -> Color {
-        switch state {
-        case .granted:
-            return AnnaPalette.mint
-        case .denied:
-            return .red
-        case .manualStepRequired:
-            return AnnaPalette.warning
-        case .notRequested:
-            return AnnaPalette.copper
+    private func permRow(_ status: PermissionStatus) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: iconName(for: status.kind))
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.4))
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(status.kind.displayName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                Text(status.kind.reason)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.3))
+            }
+
+            Spacer()
+
+            if status.state == .granted {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color(hex: "69D3B0"))
+            } else {
+                HStack(spacing: 6) {
+                    Button {
+                        viewModel.request(status.kind)
+                    } label: {
+                        Text("Grant")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(.white.opacity(0.07), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        viewModel.openSettings(for: status.kind)
+                    } label: {
+                        Image(systemName: "arrow.up.forward")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.3))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open System Settings")
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color.white.opacity(0.03))
+    }
+
+    private func iconName(for kind: PermissionKind) -> String {
+        switch kind {
+        case .microphone: return "mic"
+        case .accessibility: return "hand.point.up.left"
+        case .automation: return "gearshape.2"
+        case .screenRecording: return "rectangle.dashed.badge.record"
         }
     }
 }

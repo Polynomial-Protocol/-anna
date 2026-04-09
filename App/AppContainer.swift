@@ -15,10 +15,15 @@ final class AppContainer: ObservableObject {
     let responseBubbleController: ResponseBubbleController
     let textBarController: TextBarController
     let pointerOverlayManager: PointerOverlayManager
+    let knowledgeStore: KnowledgeStore
+    let clipboardWatcher: ClipboardWatcher
     let logger: RuntimeLogger
 
     @Published var settings: AppSettings {
-        didSet { settings.save() }
+        didSet {
+            settings.save()
+            clipboardWatcher.enabled = settings.clipboardCaptureEnabled
+        }
     }
     @Published var onboardingState: OnboardingState
     private var hotkeysConfigured = false
@@ -67,6 +72,8 @@ final class AppContainer: ObservableObject {
         responseBubbleController: ResponseBubbleController,
         textBarController: TextBarController,
         pointerOverlayManager: PointerOverlayManager,
+        knowledgeStore: KnowledgeStore,
+        clipboardWatcher: ClipboardWatcher,
         logger: RuntimeLogger
     ) {
         self.permissionService = permissionService
@@ -83,6 +90,8 @@ final class AppContainer: ObservableObject {
         self.responseBubbleController = responseBubbleController
         self.textBarController = textBarController
         self.pointerOverlayManager = pointerOverlayManager
+        self.knowledgeStore = knowledgeStore
+        self.clipboardWatcher = clipboardWatcher
         self.logger = logger
     }
 
@@ -98,6 +107,9 @@ final class AppContainer: ObservableObject {
 
         let directExecutor = DirectActionExecutor()
         let claudeCLI = ClaudeCLIService()
+        let conversationStore = ConversationStore()
+        let knowledgeStore = KnowledgeStore()
+        let clipboardWatcher = ClipboardWatcher(knowledgeStore: knowledgeStore)
 
         let engine = AssistantEngine(
             audioCaptureService: audioCaptureService,
@@ -105,7 +117,9 @@ final class AppContainer: ObservableObject {
             textInsertionService: textInsertionService,
             screenCaptureService: screenCaptureService,
             directExecutor: directExecutor,
-            claudeCLI: claudeCLI
+            claudeCLI: claudeCLI,
+            conversationStore: conversationStore,
+            knowledgeStore: knowledgeStore
         )
 
         let logger = RuntimeLogger()
@@ -141,8 +155,14 @@ final class AppContainer: ObservableObject {
             responseBubbleController: ResponseBubbleController(),
             textBarController: TextBarController(),
             pointerOverlayManager: PointerOverlayManager(),
+            knowledgeStore: knowledgeStore,
+            clipboardWatcher: clipboardWatcher,
             logger: logger
         )
+
+        // Start clipboard watching (respects settings)
+        clipboardWatcher.enabled = settings.clipboardCaptureEnabled
+        clipboardWatcher.start()
 
         // Start periodic permission re-checking
         container.startPermissionMonitor()

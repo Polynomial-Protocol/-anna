@@ -41,20 +41,25 @@ enum IntentRouter {
             }
         }
 
-        // Tier 1: Play on YouTube — "play X on youtube", "play X in youtube",
-        // "play some songs", "play top songs", "play music"
+        // Tier 1: Play media — detect platform (Spotify, Apple Music, YouTube) or default to YouTube
         if text.hasPrefix("play ") {
             let query = String(text.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            // If it mentions YouTube or is a music/song/video query
+
+            // Detect target platform from the command
+            if text.contains("spotify") || text.contains("spotfy") {
+                let cleanQuery = Self.removePlatformMention(query, platforms: ["spotify", "spotfy"])
+                return .direct(.playOnSpotify(query: cleanQuery.isEmpty ? "top songs" : cleanQuery))
+            }
+            if text.contains("apple music") || text.contains("itunes") || text.contains("i tunes") {
+                let cleanQuery = Self.removePlatformMention(query, platforms: ["apple music", "itunes", "i tunes"])
+                return .direct(.playOnAppleMusic(query: cleanQuery.isEmpty ? "top songs" : cleanQuery))
+            }
             if text.contains("youtube") || text.contains("you tube") {
-                let cleanQuery = query
-                    .replacingOccurrences(of: "on youtube", with: "")
-                    .replacingOccurrences(of: "in youtube", with: "")
-                    .replacingOccurrences(of: "on you tube", with: "")
-                    .trimmingCharacters(in: .whitespaces)
+                let cleanQuery = Self.removePlatformMention(query, platforms: ["youtube", "you tube"])
                 return .direct(.playOnYouTube(query: cleanQuery.isEmpty ? "top songs" : cleanQuery))
             }
-            // Generic "play X" — treat as YouTube if it sounds like media
+
+            // No platform specified — default to YouTube for media queries
             let mediaKeywords = ["song", "songs", "music", "video", "movie", "track", "album",
                                  "playlist", "top", "latest", "new", "best", "favorites",
                                  "hits", "trending", "popular"]
@@ -74,6 +79,19 @@ enum IntentRouter {
 
         // Tier 2: Everything else → Claude CLI
         return .agent(transcript)
+    }
+
+    private static func removePlatformMention(_ query: String, platforms: [String]) -> String {
+        var clean = query
+        for platform in platforms {
+            clean = clean
+                .replacingOccurrences(of: "on \(platform)", with: "")
+                .replacingOccurrences(of: "in \(platform)", with: "")
+                .replacingOccurrences(of: "using \(platform)", with: "")
+                .replacingOccurrences(of: "with \(platform)", with: "")
+                .replacingOccurrences(of: platform, with: "")
+        }
+        return clean.trimmingCharacters(in: .whitespaces)
     }
 
     private static func extractSearchQuery(_ text: String) -> String? {

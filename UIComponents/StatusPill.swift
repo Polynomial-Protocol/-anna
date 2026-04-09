@@ -6,10 +6,10 @@ struct StatusPill: View {
 
     var body: some View {
         Text(text)
-            .font(.caption.weight(.bold))
+            .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(color)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(color.opacity(0.16), in: Capsule())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.12), in: Capsule())
     }
 }

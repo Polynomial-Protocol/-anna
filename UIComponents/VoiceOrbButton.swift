@@ -9,35 +9,35 @@ struct VoiceOrbButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 ZStack {
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [accent.opacity(0.95), accent.opacity(0.32)],
+                                colors: [accent.opacity(0.85), accent.opacity(0.25)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
-                        .frame(width: 140, height: 140)
+                        .frame(width: 120, height: 120)
                         .overlay(
                             Circle()
-                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                         )
-                        .shadow(color: accent.opacity(0.42), radius: isActive ? 30 : 14, y: 12)
+                        .shadow(color: accent.opacity(0.3), radius: isActive ? 24 : 10, y: 8)
 
                     Image(systemName: isActive ? "waveform" : "mic.fill")
-                        .font(.system(size: 40, weight: .bold))
+                        .font(.system(size: 32, weight: .bold))
                         .foregroundStyle(.white)
                 }
 
-                VStack(spacing: 4) {
+                VStack(spacing: 3) {
                     Text(title)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(AnnaPalette.cloud)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.8))
                     Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.white.opacity(0.6))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.4))
                 }
             }
         }

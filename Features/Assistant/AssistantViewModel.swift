@@ -6,7 +6,7 @@ final class AssistantViewModel: ObservableObject {
     @Published var lastTranscript: String = ""
     @Published var lastTranscriptTime: Date? = nil
     @Published var lastResponseTime: Date? = nil
-    @Published var statusLine: String = "Hold Right ⌘ to ask Anna. Hold Right ⌥ to dictate."
+    @Published var statusLine: String = "I'm right here — hold Right ⌘ to talk."
     @Published var isCapturing: Bool = false
     @Published var activeMode: CaptureMode = .assistantCommand
     @Published var status: AnnaStatus = .idle
@@ -53,7 +53,7 @@ final class AssistantViewModel: ObservableObject {
         pendingEnd = false
         status = .listening
         streamingText = ""
-        statusLine = mode == .assistantCommand ? "Listening for a command..." : "Listening for dictation..."
+        statusLine = mode == .assistantCommand ? "I'm listening..." : "Go ahead, I'll type it out..."
         logger?.log("Begin capture — mode: \(mode.rawValue)", tag: "capture")
 
         Task {
@@ -148,17 +148,17 @@ final class AssistantViewModel: ObservableObject {
                                 await MainActor.run {
                                     if self.status == .speaking {
                                         self.status = .idle
-                                        self.statusLine = "Ready for the next action."
+                                        self.statusLine = "All done — I'm here if you need me."
                                     }
                                 }
                             }
                         } else {
                             self.status = .idle
-                            self.statusLine = "Ready for the next action."
+                            self.statusLine = "All done — I'm here if you need me."
                         }
                     } else {
                         self.status = .idle
-                        self.statusLine = "Ready for the next action."
+                        self.statusLine = "All done — I'm here if you need me."
                     }
                 }
             } catch {
@@ -166,7 +166,7 @@ final class AssistantViewModel: ObservableObject {
                     self.isCapturing = false
                     self.recorderReady = false
                     self.status = .idle
-                    self.statusLine = "Anna needs attention."
+                    self.statusLine = "Hmm, something went wrong. Try again?"
                     let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                     self.logger?.log("Action failed: \(errorMsg)", tag: "action")
                     self.pushEvent(title: "Action failed", body: errorMsg, tone: .failure)
@@ -202,7 +202,7 @@ final class AssistantViewModel: ObservableObject {
                 self.isCapturing = false
                 self.recorderReady = false
                 self.status = .idle
-                self.statusLine = "Capture cancelled."
+                self.statusLine = "No worries, cancelled."
             }
         }
     }

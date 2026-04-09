@@ -11,359 +11,212 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 Text("Settings")
-                    .font(.system(size: 34, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
 
-                // Interaction section
-                settingsSection(title: "Interaction") {
-                    settingsToggle(
-                        "Require confirmation for purchases",
-                        isOn: Binding(
-                            get: { viewModel.settings.requiresConfirmationForPurchases },
-                            set: {
-                                viewModel.settings.requiresConfirmationForPurchases = $0
-                                viewModel.persist()
-                            }
-                        )
-                    )
-
-                    settingsToggle(
-                        "Reuse successful action routes",
-                        isOn: Binding(
-                            get: { viewModel.settings.autoReuseSuccessfulRoutes },
-                            set: {
-                                viewModel.settings.autoReuseSuccessfulRoutes = $0
-                                viewModel.persist()
-                            }
-                        )
-                    )
+                section("Interaction") {
+                    toggle("Require confirmation for purchases", $viewModel.settings.requiresConfirmationForPurchases)
+                    toggle("Reuse successful action routes", $viewModel.settings.autoReuseSuccessfulRoutes)
                 }
 
-                // Voice section
-                settingsSection(title: "Voice") {
-                    settingsToggle(
-                        "Speak responses aloud",
-                        isOn: Binding(
-                            get: { viewModel.settings.ttsEnabled },
-                            set: {
-                                viewModel.settings.ttsEnabled = $0
-                                viewModel.persist()
-                            }
-                        )
-                    )
+                section("Voice") {
+                    toggle("Let me talk back to you", $viewModel.settings.ttsEnabled)
 
-                    // Voice picker
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text("Voice")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.8))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.55))
 
-                        if availableVoices.isEmpty {
-                            Text("Loading voices...")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.white.opacity(0.4))
-                        } else {
+                        if !availableVoices.isEmpty {
                             let selectedID = viewModel.settings.ttsVoiceIdentifier.isEmpty
                                 ? TTSService.bestAvailableVoiceID()
                                 : viewModel.settings.ttsVoiceIdentifier
 
-                            // Currently selected voice info
                             if let current = availableVoices.first(where: { $0.id == selectedID }) {
                                 HStack(spacing: 8) {
-                                    voiceBadge(current)
+                                    Text(current.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.white.opacity(0.7))
+                                    Text(current.quality.rawValue)
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(.white.opacity(0.35))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(.white.opacity(0.06), in: Capsule())
                                     Spacer()
                                     Button {
-                                        previewVoice(current)
+                                        if previewService.isSpeaking { previewService.stop() }
+                                        else { previewService.speak("Hi, I'm Anna.", rate: viewModel.settings.ttsRate, voiceIdentifier: current.id) }
                                     } label: {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: previewService.isSpeaking ? "stop.fill" : "play.fill")
-                                                .font(.system(size: 10))
-                                            Text(previewService.isSpeaking ? "Stop" : "Preview")
-                                                .font(.system(size: 11, weight: .medium))
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(AnnaPalette.accent.opacity(0.2), in: Capsule())
-                                        .foregroundStyle(AnnaPalette.accent)
+                                        Image(systemName: previewService.isSpeaking ? "stop.fill" : "play.fill")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.white.opacity(0.4))
                                     }
                                     .buttonStyle(.plain)
                                 }
                             }
 
-                            // Voice list grouped by quality
                             voiceList(selectedID: selectedID)
                         }
 
-                        Text("For the best voices, go to System Settings > Accessibility > Spoken Content > System Voice > Manage Voices and download Premium or Enhanced voices.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.4))
+                        Text("Want me to sound better? Download Premium voices in System Settings > Accessibility > Spoken Content.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.25))
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    // Speech rate
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Speech rate")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.8))
-                        HStack {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Speed")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.55))
+                        HStack(spacing: 8) {
                             Text("Slow")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.5))
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(0.3))
                             Slider(value: Binding(
                                 get: { viewModel.settings.ttsRate },
-                                set: {
-                                    viewModel.settings.ttsRate = $0
-                                    viewModel.persist()
-                                }
+                                set: { viewModel.settings.ttsRate = $0; viewModel.persist() }
                             ), in: 0.3...0.65)
-                            .tint(AnnaPalette.accent)
+                            .tint(.white.opacity(0.3))
                             Text("Fast")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.5))
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(0.3))
                         }
                     }
                 }
 
-                // Integration section
-                settingsSection(title: "Integration") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Preferred browser")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.8))
-                        Text(viewModel.settings.preferredBrowserBundleID)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.5))
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("AI backend")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.8))
-                        Text("Claude CLI (local) — uses Claude Sonnet for reasoning")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.5))
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Speech engine")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.8))
-                        Text("Apple Speech Recognition (on-device)")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.5))
-                    }
+                section("Knowledge") {
+                    toggle("Remember things for me", $viewModel.settings.knowledgeBaseEnabled)
+                    toggle("Pay attention to what I copy", $viewModel.settings.clipboardCaptureEnabled)
+                    Text("I'll remember copied text so I can help you better. Sensitive stuff is always filtered out.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.25))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                // Keyboard shortcuts section
-                settingsSection(title: "Keyboard Shortcuts") {
-                    shortcutRow("Right ⌘ (hold)", "Voice agent command")
-                    shortcutRow("Right ⌥ (hold)", "Dictation mode")
-                    shortcutRow("⌘ ⇧ Space", "Toggle text bar")
+                section("Shortcuts") {
+                    shortcutRow("Right \u{2318}", "Agent command")
+                    shortcutRow("Right \u{2325}", "Dictation")
+                    shortcutRow("\u{2318}\u{21E7}Space", "Text bar")
                 }
             }
-            .padding(28)
+            .padding(24)
         }
-        .background(AnnaPalette.pane)
-        .onAppear {
-            availableVoices = TTSService.availableVoices()
-        }
+        .onAppear { availableVoices = TTSService.availableVoices() }
     }
 
-    // MARK: - Voice List
+    // MARK: - Components
 
-    private func voiceList(selectedID: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            let premiumVoices = availableVoices.filter { $0.quality == .premium }
-            let enhancedVoices = availableVoices.filter { $0.quality == .enhanced }
-            let defaultVoices = availableVoices.filter { $0.quality == .default }
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.3))
+                .tracking(1)
 
-            if !premiumVoices.isEmpty {
-                voiceGroup("Premium", voices: premiumVoices, selectedID: selectedID)
-            }
-            if !enhancedVoices.isEmpty {
-                voiceGroup("Enhanced", voices: enhancedVoices, selectedID: selectedID)
-            }
-            if !defaultVoices.isEmpty {
-                voiceGroup("Default", voices: defaultVoices.prefix(8).map { $0 }, selectedID: selectedID)
-            }
-        }
-    }
-
-    private func voiceGroup(_ title: String, voices: [VoiceInfo], selectedID: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white.opacity(0.4))
-                .padding(.top, 6)
-
-            FlowLayout(spacing: 6) {
-                ForEach(voices) { voice in
-                    Button {
-                        viewModel.settings.ttsVoiceIdentifier = voice.id
-                        viewModel.persist()
-                    } label: {
-                        voiceChip(voice, isSelected: voice.id == selectedID)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    private func voiceChip(_ voice: VoiceInfo, isSelected: Bool) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: voice.gender == .female ? "person.fill" : voice.gender == .male ? "person.fill" : "person")
-                .font(.system(size: 9))
-            Text(voice.name)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(
-            isSelected
-                ? AnnaPalette.accent.opacity(0.25)
-                : Color.white.opacity(0.06),
-            in: Capsule()
-        )
-        .overlay(
-            Capsule().stroke(
-                isSelected ? AnnaPalette.accent.opacity(0.6) : Color.white.opacity(0.08),
-                lineWidth: 0.5
-            )
-        )
-        .foregroundStyle(isSelected ? .white : .white.opacity(0.7))
-    }
-
-    private func voiceBadge(_ voice: VoiceInfo) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "speaker.wave.2.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(AnnaPalette.accent)
-            Text(voice.name)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.9))
-            Text(voice.quality.rawValue)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(qualityColor(voice.quality))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(qualityColor(voice.quality).opacity(0.15), in: Capsule())
-            Text(voice.gender.rawValue)
-                .font(.system(size: 9))
-                .foregroundStyle(.white.opacity(0.4))
-        }
-    }
-
-    private func qualityColor(_ quality: VoiceInfo.VoiceQuality) -> Color {
-        switch quality {
-        case .premium: return AnnaPalette.mint
-        case .enhanced: return AnnaPalette.copper
-        case .default: return .secondary
-        }
-    }
-
-    private func previewVoice(_ voice: VoiceInfo) {
-        if previewService.isSpeaking {
-            previewService.stop()
-        } else {
-            previewService.speak(
-                "Hi, I'm Anna, your Mac assistant. I can help you get things done and teach you how apps work.",
-                rate: viewModel.settings.ttsRate,
-                voiceIdentifier: voice.id
-            )
-        }
-    }
-
-    // MARK: - Shared Components
-
-    private func settingsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.7))
-
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 14) {
                 content()
             }
-            .padding(16)
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(AnnaPalette.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                    )
-            )
+            .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
-    private func settingsToggle(_ label: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
+    private func toggle(_ label: String, _ binding: Binding<Bool>) -> some View {
+        Toggle(isOn: Binding(
+            get: { binding.wrappedValue },
+            set: { binding.wrappedValue = $0; viewModel.persist() }
+        )) {
             Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.8))
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.6))
         }
         .toggleStyle(.switch)
-        .tint(AnnaPalette.accent)
+        .controlSize(.small)
+        .tint(.white.opacity(0.35))
     }
 
-    private func shortcutRow(_ key: String, _ description: String) -> some View {
-        HStack {
+    private func shortcutRow(_ key: String, _ desc: String) -> some View {
+        HStack(spacing: 10) {
             Text(key)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.7))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-            Text(description)
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.6))
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.4))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+            Text(desc)
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.45))
+        }
+    }
+
+    // MARK: - Voice
+
+    private func voiceList(selectedID: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            let groups: [(String, [VoiceInfo])] = [
+                ("Premium", availableVoices.filter { $0.quality == .premium }),
+                ("Enhanced", availableVoices.filter { $0.quality == .enhanced }),
+                ("Default", Array(availableVoices.filter { $0.quality == .default }.prefix(8)))
+            ].filter { !$0.1.isEmpty }
+
+            ForEach(groups, id: \.0) { title, voices in
+                Text(title)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.25))
+                    .padding(.top, 4)
+
+                FlowLayout(spacing: 4) {
+                    ForEach(voices) { voice in
+                        Button {
+                            viewModel.settings.ttsVoiceIdentifier = voice.id
+                            viewModel.persist()
+                        } label: {
+                            Text(voice.name)
+                                .font(.system(size: 10, weight: voice.id == selectedID ? .semibold : .regular))
+                                .foregroundStyle(voice.id == selectedID ? .white.opacity(0.8) : .white.opacity(0.45))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(
+                                    voice.id == selectedID ? Color.white.opacity(0.1) : Color.white.opacity(0.04),
+                                    in: Capsule()
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 }
 
-// MARK: - Flow Layout for Voice Chips
+// MARK: - Flow Layout
 
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = layout(proposal: proposal, subviews: subviews)
-        return result.size
+        layout(proposal: proposal, subviews: subviews).size
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let result = layout(proposal: proposal, subviews: subviews)
-        for (index, position) in result.positions.enumerated() {
-            subviews[index].place(
-                at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y),
-                proposal: .unspecified
-            )
+        for (i, pos) in result.positions.enumerated() {
+            subviews[i].place(at: CGPoint(x: bounds.minX + pos.x, y: bounds.minY + pos.y), proposal: .unspecified)
         }
     }
 
     private func layout(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
-        let maxWidth = proposal.width ?? .infinity
+        let maxW = proposal.width ?? .infinity
         var positions: [CGPoint] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var totalHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth && x > 0 {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
+        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, totalH: CGFloat = 0
+        for sub in subviews {
+            let s = sub.sizeThatFits(.unspecified)
+            if x + s.width > maxW && x > 0 { x = 0; y += rowH + spacing; rowH = 0 }
             positions.append(CGPoint(x: x, y: y))
-            rowHeight = max(rowHeight, size.height)
-            x += size.width + spacing
-            totalHeight = y + rowHeight
+            rowH = max(rowH, s.height); x += s.width + spacing; totalH = y + rowH
         }
-
-        return (CGSize(width: maxWidth, height: totalHeight), positions)
+        return (CGSize(width: maxW, height: totalH), positions)
     }
 }

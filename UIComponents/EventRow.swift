@@ -4,38 +4,37 @@ struct EventRow: View {
     let event: AssistantEvent
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 10) {
             Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-                .padding(.top, 6)
+                .fill(toneColor)
+                .frame(width: 5, height: 5)
+                .padding(.top, 5)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text(event.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.92))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.7))
                     Spacer()
                     Text(event.timestamp, style: .time)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.25))
                 }
-
                 Text(event.body)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(3)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .lineLimit(2)
             }
         }
         .padding(.vertical, 4)
     }
 
-    private var color: Color {
+    private var toneColor: Color {
         switch event.tone {
-        case .neutral: return .secondary
-        case .success: return AnnaPalette.mint
-        case .warning: return AnnaPalette.warning
-        case .failure: return .red
+        case .neutral: return .white.opacity(0.2)
+        case .success: return Color(hex: "69D3B0")
+        case .warning: return Color(hex: "FFC764")
+        case .failure: return .red.opacity(0.7)
         }
     }
 }

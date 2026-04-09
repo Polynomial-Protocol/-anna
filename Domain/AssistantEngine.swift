@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 actor AssistantEngine {
     private let audioCaptureService: AudioCaptureService
@@ -7,9 +8,10 @@ actor AssistantEngine {
     private let screenCaptureService: ScreenCaptureService
     private let directExecutor: DirectActionExecutor
     private let claudeCLI: ClaudeCLIService
+    private let conversationStore: ConversationStore
+    private let knowledgeStore: KnowledgeStore
 
     private var activeMode: CaptureMode?
-    private var conversationHistory: [ConversationTurn] = []
 
     init(
         audioCaptureService: AudioCaptureService,
@@ -17,7 +19,9 @@ actor AssistantEngine {
         textInsertionService: TextInsertionService,
         screenCaptureService: ScreenCaptureService,
         directExecutor: DirectActionExecutor,
-        claudeCLI: ClaudeCLIService
+        claudeCLI: ClaudeCLIService,
+        conversationStore: ConversationStore,
+        knowledgeStore: KnowledgeStore
     ) {
         self.audioCaptureService = audioCaptureService
         self.voiceService = voiceService
@@ -25,6 +29,8 @@ actor AssistantEngine {
         self.screenCaptureService = screenCaptureService
         self.directExecutor = directExecutor
         self.claudeCLI = claudeCLI
+        self.conversationStore = conversationStore
+        self.knowledgeStore = knowledgeStore
     }
 
     func beginCapture(mode: CaptureMode) async throws {
@@ -65,27 +71,43 @@ actor AssistantEngine {
             case .agent(let request):
                 // Capture screenshot for context
                 var screenshotPath: String? = nil
+                var screenshotUnavailableReason: String? = nil
                 do {
                     let fileURL = try await screenCaptureService.captureToFile()
                     screenshotPath = fileURL.path
                 } catch {
-                    // Screenshot failed, continue without it
+                    // Tell Claude why the screenshot is missing so it can guide accordingly
+                    if !CGPreflightScreenCaptureAccess() {
+                        CGRequestScreenCaptureAccess()
+                        screenshotUnavailableReason = "Screen Recording permission has not been granted yet. Anna just prompted the user to enable it in System Settings > Privacy & Security > Screen Recording. For now, help without visual context."
+                    } else {
+                        screenshotUnavailableReason = "Screenshot capture failed unexpectedly. Help without visual context."
+                    }
                 }
 
                 // Add to conversation history
-                conversationHistory.append(ConversationTurn(
+                await conversationStore.append(ConversationTurn(
                     role: .user,
                     content: request,
                     timestamp: Date()
                 ))
 
-                // Build context with history
-                let historyContext = buildHistoryContext()
+                // Build context with history and knowledge
+                let historyContext = await buildHistoryContext()
+                let knowledgeContext = await buildKnowledgeContext(for: request)
+
+                var fullContext = historyContext ?? ""
+                if let knowledge = knowledgeContext {
+                    fullContext += (fullContext.isEmpty ? "" : "\n\n") + knowledge
+                }
+                if let reason = screenshotUnavailableReason {
+                    fullContext += (fullContext.isEmpty ? "" : "\n\n") + reason
+                }
 
                 let result = try await claudeCLI.execute(
                     userRequest: request,
                     screenshotPath: screenshotPath,
-                    conversationContext: historyContext
+                    conversationContext: fullContext.isEmpty ? nil : fullContext
                 )
 
                 // Parse pointer coordinates from response
@@ -95,16 +117,18 @@ actor AssistantEngine {
                 let cleanText = Self.cleanResponseText(result.text)
 
                 // Add assistant response to history
-                conversationHistory.append(ConversationTurn(
+                await conversationStore.append(ConversationTurn(
                     role: .assistant,
                     content: cleanText,
                     timestamp: Date()
                 ))
 
-                // Keep history manageable (last 10 turns)
-                if conversationHistory.count > 20 {
-                    conversationHistory = Array(conversationHistory.suffix(20))
-                }
+                // Store conversation in knowledge dump
+                await knowledgeStore.addEntry(
+                    content: "Q: \(request)\nA: \(cleanText)",
+                    source: .conversation,
+                    title: String(request.prefix(80))
+                )
 
                 let outcome: AutomationOutcome = result.success
                     ? .completed(summary: cleanText, openedURL: nil)
@@ -119,19 +143,28 @@ actor AssistantEngine {
         await audioCaptureService.cancelCapture()
     }
 
-    func clearConversation() {
-        conversationHistory.removeAll()
+    func clearConversation() async {
+        await conversationStore.clear()
     }
 
     // MARK: - Conversation Context
 
-    private func buildHistoryContext() -> String? {
-        guard conversationHistory.count > 1 else { return nil }
-        // Include last few turns as context
-        let recent = conversationHistory.suffix(6)
+    private func buildHistoryContext() async -> String? {
+        let recent = await conversationStore.recentTurns(6)
+        guard recent.count > 1 else { return nil }
         return recent.map { turn in
             "\(turn.role.rawValue.capitalized): \(turn.content)"
         }.joined(separator: "\n")
+    }
+
+    // MARK: - Knowledge Context
+
+    private func buildKnowledgeContext(for query: String) async -> String? {
+        let relevant = await knowledgeStore.findRelevant(query: query, limit: 3)
+        guard !relevant.isEmpty else { return nil }
+
+        let entries = relevant.map { "- \($0.title): \($0.content.prefix(200))" }.joined(separator: "\n")
+        return "Relevant memories from the user's knowledge base:\n\(entries)"
     }
 
     // MARK: - Pointer Parsing

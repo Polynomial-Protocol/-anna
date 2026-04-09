@@ -54,6 +54,8 @@ enum DirectAction: Sendable {
     case openApp(name: String)
     case systemControl(command: String)
     case playOnYouTube(query: String)
+    case playOnSpotify(query: String)
+    case playOnAppleMusic(query: String)
     case searchWeb(query: String)
     case openURL(url: String)
 }
@@ -81,13 +83,13 @@ struct AssistantEvent: Identifiable, Sendable {
 
 // MARK: - Conversation History
 
-struct ConversationTurn: Sendable {
+struct ConversationTurn: Codable, Sendable {
     let role: ConversationRole
     let content: String
     let timestamp: Date
 }
 
-enum ConversationRole: String, Sendable {
+enum ConversationRole: String, Codable, Sendable {
     case user
     case assistant
 }
@@ -103,22 +105,37 @@ struct PointerCoordinate: Sendable {
 // MARK: - Settings Persistence
 
 struct AppSettings: Codable, Sendable {
+    static let currentSchemaVersion = 1
+
+    var schemaVersion: Int = Self.currentSchemaVersion
     var requiresConfirmationForPurchases: Bool = true
     var autoReuseSuccessfulRoutes: Bool = true
     var preferredBrowserBundleID: String = "com.apple.Safari"
     var ttsEnabled: Bool = true
     var ttsRate: Float = 0.50
-    var ttsVoiceIdentifier: String = ""  // empty = auto-select best
-    var lastSelectedTab: String = "assistant"
+    var ttsVoiceIdentifier: String = "com.apple.voice.compact.en-US.Samantha"
+    var lastSelectedTab: String = "Anna"
+    var knowledgeBaseEnabled: Bool = true
+    var clipboardCaptureEnabled: Bool = true
 
     static let defaultValue = AppSettings()
 
     static func load() -> AppSettings {
         guard let data = UserDefaults.standard.data(forKey: "anna_settings"),
-              let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
+              var settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
             return .defaultValue
         }
+        if settings.schemaVersion < currentSchemaVersion {
+            settings = migrate(settings)
+            settings.save()
+        }
         return settings
+    }
+
+    private static func migrate(_ old: AppSettings) -> AppSettings {
+        var s = old
+        s.schemaVersion = currentSchemaVersion
+        return s
     }
 
     func save() {
