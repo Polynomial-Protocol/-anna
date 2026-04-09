@@ -138,6 +138,69 @@ actor AssistantEngine {
         }
     }
 
+    /// Execute a text command directly (no audio capture or transcription).
+    func executeText(_ text: String) async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
+        let tier = IntentRouter.route(text)
+        switch tier {
+        case .direct(let action):
+            let outcome = try await directExecutor.execute(action)
+            return (text, outcome, nil)
+
+        case .agent(let request):
+            var screenshotPath: String? = nil
+            var screenshotUnavailableReason: String? = nil
+            do {
+                let fileURL = try await screenCaptureService.captureToFile()
+                screenshotPath = fileURL.path
+            } catch {
+                if !CGPreflightScreenCaptureAccess() {
+                    CGRequestScreenCaptureAccess()
+                    screenshotUnavailableReason = "Screen Recording permission has not been granted yet."
+                } else {
+                    screenshotUnavailableReason = "Screenshot capture failed unexpectedly."
+                }
+            }
+
+            await conversationStore.append(ConversationTurn(
+                role: .user, content: request, timestamp: Date()
+            ))
+
+            let historyContext = await buildHistoryContext()
+            let knowledgeContext = await buildKnowledgeContext(for: request)
+            var fullContext = historyContext ?? ""
+            if let knowledge = knowledgeContext {
+                fullContext += (fullContext.isEmpty ? "" : "\n\n") + knowledge
+            }
+            if let reason = screenshotUnavailableReason {
+                fullContext += (fullContext.isEmpty ? "" : "\n\n") + reason
+            }
+
+            let result = try await claudeCLI.execute(
+                userRequest: request,
+                screenshotPath: screenshotPath,
+                conversationContext: fullContext.isEmpty ? nil : fullContext
+            )
+
+            let pointer = Self.parsePointerCoordinate(from: result.text)
+            let cleanText = Self.cleanResponseText(result.text)
+
+            await conversationStore.append(ConversationTurn(
+                role: .assistant, content: cleanText, timestamp: Date()
+            ))
+
+            await knowledgeStore.addEntry(
+                content: "Q: \(request)\nA: \(cleanText)",
+                source: .conversation,
+                title: String(request.prefix(80))
+            )
+
+            let outcome: AutomationOutcome = result.success
+                ? .completed(summary: cleanText, openedURL: nil)
+                : .blocked(summary: cleanText)
+            return (text, outcome, pointer)
+        }
+    }
+
     func cancelCapture() async {
         activeMode = nil
         await audioCaptureService.cancelCapture()

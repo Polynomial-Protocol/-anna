@@ -204,6 +204,32 @@ final class AppContainer: ObservableObject {
         }
         hotkeyMonitor.start()
         logger.log("Hotkey monitor started — Right ⌘ for agent, Right ⌥ for dictation", tag: "hotkey")
+
+        // Global hotkey: Cmd+Shift+Space → toggle text bar
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return }
+            // Space = keyCode 49, Cmd+Shift
+            if event.keyCode == 49 &&
+               event.modifierFlags.contains(.command) &&
+               event.modifierFlags.contains(.shift) {
+                DispatchQueue.main.async {
+                    self.textBarController.toggle(viewModel: self.assistantViewModel)
+                }
+            }
+        }
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == 49 &&
+               event.modifierFlags.contains(.command) &&
+               event.modifierFlags.contains(.shift) {
+                DispatchQueue.main.async {
+                    self.textBarController.toggle(viewModel: self.assistantViewModel)
+                }
+                return nil // consume the event
+            }
+            return event
+        }
+        logger.log("Global hotkey registered — ⌘⇧Space for text bar", tag: "hotkey")
     }
 
     deinit {

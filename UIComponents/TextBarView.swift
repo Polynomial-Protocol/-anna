@@ -114,8 +114,9 @@ struct TextBarContent: View {
                 .font(.system(size: 14))
                 .foregroundStyle(.white.opacity(0.85))
                 .onSubmit {
-                    guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    viewModel.beginCapture(mode: .assistantCommand)
+                    let text = inputText.trimmingCharacters(in: .whitespaces)
+                    guard !text.isEmpty else { return }
+                    viewModel.sendText(text)
                     inputText = ""
                     onDismiss()
                 }

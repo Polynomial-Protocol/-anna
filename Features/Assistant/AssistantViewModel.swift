@@ -191,6 +191,88 @@ final class AssistantViewModel: ObservableObject {
         }
     }
 
+    /// Send a typed text command directly to the engine (no audio capture).
+    func sendText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isCapturing else { return }
+        isCapturing = true
+        status = .thinking
+        streamingText = ""
+        statusLine = "Thinking..."
+        logger?.log("Text input: \"\(trimmed)\"", tag: "text")
+
+        Task {
+            do {
+                let result = try await engine.executeText(trimmed)
+                await MainActor.run {
+                    self.isCapturing = false
+                    self.lastTranscript = result.0
+                    self.lastTranscriptTime = Date()
+                    self.logger?.log("Text result: \"\(result.0)\"", tag: "text")
+
+                    if let outcome = result.1 {
+                        let responseText: String
+                        switch outcome {
+                        case .completed(let summary, let url):
+                            responseText = summary
+                            self.logger?.log("Action completed: \(summary) \(url?.absoluteString ?? "")", tag: "action")
+                            self.pushEvent(title: "Action completed", body: "\(result.0)\n\n\(summary)", tone: .success)
+                        case .needsConfirmation(let summary):
+                            responseText = summary
+                            self.pushEvent(title: "Needs confirmation", body: "\(result.0)\n\n\(summary)", tone: .warning)
+                        case .blocked(let summary):
+                            responseText = summary
+                            self.pushEvent(title: "Action blocked", body: "\(result.0)\n\n\(summary)", tone: .failure)
+                        }
+
+                        self.lastResponseTime = Date()
+                        self.animateStreamingText(responseText)
+
+                        if let pointer = result.2 {
+                            let screenSize = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
+                            self.pointerOverlayManager.pointAt(pointer, screenSize: screenSize)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                                self.pointerOverlayManager.hide()
+                            }
+                        }
+
+                        let settings = self.settingsProvider()
+                        if settings.ttsEnabled {
+                            self.status = .speaking
+                            self.ttsService.speak(responseText, rate: settings.ttsRate, voiceIdentifier: settings.ttsVoiceIdentifier)
+                            Task {
+                                while self.ttsService.isSpeaking {
+                                    try? await Task.sleep(nanoseconds: 200_000_000)
+                                }
+                                await MainActor.run {
+                                    if self.status == .speaking {
+                                        self.status = .idle
+                                        self.statusLine = "All done — I'm here if you need me."
+                                    }
+                                }
+                            }
+                        } else {
+                            self.status = .idle
+                            self.statusLine = "All done — I'm here if you need me."
+                        }
+                    } else {
+                        self.status = .idle
+                        self.statusLine = "All done — I'm here if you need me."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isCapturing = false
+                    self.status = .idle
+                    self.statusLine = "Hmm, something went wrong. Try again?"
+                    let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    self.logger?.log("Text action failed: \(errorMsg)", tag: "action")
+                    self.pushEvent(title: "Action failed", body: errorMsg, tone: .failure)
+                }
+            }
+        }
+    }
+
     func cancelCapture() {
         guard isCapturing else { return }
         logger?.log("Capture cancelled by user", tag: "capture")
