@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Allow microphone access for voice capture -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<!-- Allow sending AppleEvents to other apps (automation) -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+	<!-- Allow JIT for ML model inference (Piper TTS, speech models) -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<!-- Allow loading unsigned in-process plugins (piper dylibs) -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<!-- Allow unsigned executable memory for ONNX runtime -->
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+</dict>
+</plist>

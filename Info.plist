@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Anna</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Anna controls apps like Safari, Music, and Finder on your behalf when you ask it to perform actions that require automation.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Anna creates and reads calendar events when you ask, like "add a meeting at 3pm" or "what's on my schedule today."</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Anna looks up contacts when you ask, like "call Mom" or "text John."</string>
+	<key>NSFocusStatusUsageDescription</key>
+	<string>Anna checks your Focus status so it knows when not to interrupt you.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Anna listens while you hold Right Command to transcribe voice commands, and while you hold Right Option to dictate text into any app.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Anna creates reminders and alarms for you when you ask, like "set an alarm for 7am" or "remind me to call Mom."</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Anna captures your screen so it can see what you're looking at and give you visual guidance, like pointing to buttons or menu items.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Anna uses on-device speech recognition to transcribe your voice commands and dictation privately on your Mac.</string>
+</dict>
+</plist>

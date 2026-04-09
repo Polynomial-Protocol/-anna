@@ -335,6 +335,43 @@ final class TTSService: NSObject, ObservableObject {
         result = result.replacingOccurrences(of: "##", with: "")
         result = result.replacingOccurrences(of: "# ", with: "")
 
+        // Remove markdown links — keep only the display text: [text](url) → text
+        result = result.replacingOccurrences(
+            of: "\\[([^\\]]+)\\]\\([^)]+\\)",
+            with: "$1",
+            options: .regularExpression
+        )
+
+        // Remove all URLs (http, https, www, and bare domains with paths)
+        result = result.replacingOccurrences(
+            of: "https?://[^\\s),]+",
+            with: "",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: "www\\.[^\\s),]+",
+            with: "",
+            options: .regularExpression
+        )
+        // Bare domain-like patterns: word.com/path, amazon.com, etc.
+        result = result.replacingOccurrences(
+            of: "\\b[a-zA-Z0-9-]+\\.(com|org|net|io|co|app|dev|ai|shop|store|me|us|uk|ca|au)[/\\w.-]*",
+            with: "",
+            options: .regularExpression
+        )
+
+        // Remove file paths
+        result = result.replacingOccurrences(
+            of: "(?:/[\\w.-]+){2,}",
+            with: "",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: "~/[\\w/.-]+",
+            with: "",
+            options: .regularExpression
+        )
+
         // Remove bullet markers
         result = result.replacingOccurrences(
             of: "(?m)^\\s*[-*•]\\s+",
@@ -345,6 +382,28 @@ final class TTSService: NSObject, ObservableObject {
         // Remove numbered list markers
         result = result.replacingOccurrences(
             of: "(?m)^\\s*\\d+\\.\\s+",
+            with: "",
+            options: .regularExpression
+        )
+
+        // Remove "Here are the steps:" / "Here's what I found:" style headers
+        result = result.replacingOccurrences(
+            of: "(?i)here(?:'s| is| are)\\s+(?:the )?(?:steps?|links?|results?|options?|some)\\s*:?",
+            with: "",
+            options: .regularExpression
+        )
+
+        // Remove parenthetical link/source references: (source), (link), (via ...), (from ...)
+        result = result.replacingOccurrences(
+            of: "\\((?:source|link|via|from|see|ref|available at)[^)]*\\)",
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        // Remove price comparison list patterns like "$XX.XX on StoreName"
+        // but keep the first mention
+        result = result.replacingOccurrences(
+            of: "(?i)(?:also )?(?:available|found|listed|sold) (?:on|at|from) [^.]+",
             with: "",
             options: .regularExpression
         )
@@ -362,20 +421,6 @@ final class TTSService: NSObject, ObservableObject {
         result = result.replacingOccurrences(of: " – ", with: ", ")
         result = result.replacingOccurrences(of: "–", with: ", ")
 
-        // Replace URLs with "a link" to avoid reading gibberish
-        result = result.replacingOccurrences(
-            of: "https?://[^\\s]+",
-            with: "a link",
-            options: .regularExpression
-        )
-
-        // Replace file paths with just the filename
-        result = result.replacingOccurrences(
-            of: "/[\\w/.-]+/(\\w+\\.\\w+)",
-            with: "$1",
-            options: .regularExpression
-        )
-
         // Clean up excessive whitespace and newlines
         result = result.replacingOccurrences(
             of: "\\n+",
@@ -388,9 +433,15 @@ final class TTSService: NSObject, ObservableObject {
             options: .regularExpression
         )
 
-        // Clean up double periods
+        // Clean up punctuation artifacts from removed content
         result = result.replacingOccurrences(of: "..", with: ".")
         result = result.replacingOccurrences(of: ". .", with: ".")
+        result = result.replacingOccurrences(of: ", ,", with: ",")
+        result = result.replacingOccurrences(of: "  ", with: " ")
+        result = result.replacingOccurrences(of: " .", with: ".")
+        result = result.replacingOccurrences(of: " ,", with: ",")
+        result = result.replacingOccurrences(of: ": .", with: ".")
+        result = result.replacingOccurrences(of: ": ,", with: ",")
 
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }

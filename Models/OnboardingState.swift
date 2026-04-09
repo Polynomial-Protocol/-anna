@@ -3,8 +3,8 @@ import Foundation
 struct OnboardingState: Sendable {
     var currentStep: Int = 0
 
-    /// Total steps: 0 = welcome, 1 = permissions, 2 = done
-    static let totalSteps = 3
+    /// Steps: 0 = welcome, 1 = capabilities, 2 = permissions, 3 = done
+    static let totalSteps = 4
 
     var isComplete: Bool {
         get { UserDefaults.standard.bool(forKey: "anna_onboarding_complete") }

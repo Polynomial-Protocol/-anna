@@ -27,7 +27,6 @@ final class AppContainer: ObservableObject {
     }
     @Published var onboardingState: OnboardingState
     private var hotkeysConfigured = false
-    private var permissionTimer: Timer?
 
     lazy var assistantViewModel: AssistantViewModel = {
         let vm = AssistantViewModel(
@@ -164,9 +163,6 @@ final class AppContainer: ObservableObject {
         clipboardWatcher.enabled = settings.clipboardCaptureEnabled
         clipboardWatcher.start()
 
-        // Start periodic permission re-checking
-        container.startPermissionMonitor()
-
         return container
     }
 
@@ -210,17 +206,7 @@ final class AppContainer: ObservableObject {
         logger.log("Hotkey monitor started — Right ⌘ for agent, Right ⌥ for dictation", tag: "hotkey")
     }
 
-    // MARK: - Permission Monitoring
-
-    private func startPermissionMonitor() {
-        permissionTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.permissionsViewModel.refresh()
-            }
-        }
-    }
-
     deinit {
-        permissionTimer?.invalidate()
+        // PermissionsViewModel handles its own refresh via app activation observer
     }
 }
