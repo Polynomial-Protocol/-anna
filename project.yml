@@ -1,11 +1,11 @@
 name: Anna
 options:
-  bundleIdPrefix: com.damienjacob
+  bundleIdPrefix: com.polynomial
   deploymentTarget:
     macOS: "14.0"
 settings:
   base:
-    PRODUCT_BUNDLE_IDENTIFIER: com.damienjacob.anna
+    PRODUCT_BUNDLE_IDENTIFIER: com.polynomial.anna
     PRODUCT_NAME: Anna
     SWIFT_VERSION: 5.10
     CURRENT_PROJECT_VERSION: 1

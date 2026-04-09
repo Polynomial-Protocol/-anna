@@ -169,13 +169,13 @@ rm -rf /Applications/Anna.app
 rm -rf ~/.anna
 
 # Remove preferences
-defaults delete com.damienjacob.anna
+defaults delete com.polynomial.anna
 
 # Remove TCC entries (optional, requires admin)
 # This clears permission grants from the system database
-sudo tccutil reset Microphone com.damienjacob.anna
-sudo tccutil reset Accessibility com.damienjacob.anna
-sudo tccutil reset ScreenCapture com.damienjacob.anna
+sudo tccutil reset Microphone com.polynomial.anna
+sudo tccutil reset Accessibility com.polynomial.anna
+sudo tccutil reset ScreenCapture com.polynomial.anna
 ```
 
 ## Troubleshooting
@@ -214,7 +214,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 macOS caches TCC permissions. If they're stale after reinstalling:
 ```bash
-sudo tccutil reset All com.damienjacob.anna
+sudo tccutil reset All com.polynomial.anna
 ```
 Then relaunch Anna and re-grant permissions.
 

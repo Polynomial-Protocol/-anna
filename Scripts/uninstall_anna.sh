@@ -5,7 +5,7 @@ set -euo pipefail
 # Removes the app, its preferences, caches, logs, and TCC permission entries
 # so that a fresh reinstall behaves as if Anna was never installed.
 
-BUNDLE_ID="com.damienjacob.anna"
+BUNDLE_ID="com.polynomial.anna"
 APP_NAME="Anna"
 
 echo "==> Uninstalling $APP_NAME ($BUNDLE_ID)"
