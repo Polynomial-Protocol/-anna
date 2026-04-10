@@ -20,7 +20,8 @@ struct RootContentView: View {
                 OnboardingView(
                     state: $container.onboardingState,
                     permissionsViewModel: container.permissionsViewModel,
-                    speechModelViewModel: container.speechModelViewModel
+                    speechModelViewModel: container.speechModelViewModel,
+                    ttsService: container.ttsService
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }

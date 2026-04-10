@@ -112,7 +112,7 @@ struct AppSettings: Codable, Sendable {
     var autoReuseSuccessfulRoutes: Bool = true
     var preferredBrowserBundleID: String = "com.apple.Safari"
     var ttsEnabled: Bool = true
-    var ttsRate: Float = 0.50
+    var ttsRate: Float = 0.46
     var ttsVoiceIdentifier: String = "com.apple.voice.compact.en-US.Samantha"
     var lastSelectedTab: String = "Anna"
     var knowledgeBaseEnabled: Bool = true

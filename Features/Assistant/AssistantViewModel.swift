@@ -125,15 +125,7 @@ final class AssistantViewModel: ObservableObject {
                         self.lastResponseTime = Date()
                         self.animateStreamingText(responseText)
 
-                        // Handle pointer if present
-                        if let pointer = result.2 {
-                            let screenSize = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
-                            self.pointerOverlayManager.pointAt(pointer, screenSize: screenSize)
-                            // Auto-hide pointer after 5 seconds
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                                self.pointerOverlayManager.hide()
-                            }
-                        }
+                        // Pointer overlay disabled — verbal guidance only
 
                         // Speak the response if TTS is enabled
                         let settings = self.settingsProvider()

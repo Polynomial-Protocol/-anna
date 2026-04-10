@@ -62,7 +62,15 @@ enum PermissionKind: String, CaseIterable, Identifiable, Sendable {
     var isRequired: Bool {
         switch self {
         case .microphone, .accessibility: return true
-        case .screenRecording, .automation, .reminders, .calendar, .contacts, .notifications: return false
+        default: return false
+        }
+    }
+
+    /// Permissions shown during onboarding (grouped)
+    var showInOnboarding: Bool {
+        switch self {
+        case .microphone, .accessibility, .screenRecording, .automation: return true
+        case .reminders, .calendar, .contacts, .notifications: return false
         }
     }
 
@@ -87,22 +95,34 @@ enum PermissionKind: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// The order permissions should be requested during onboarding
     var onboardingOrder: Int {
         switch self {
         case .microphone: return 0
         case .accessibility: return 1
         case .screenRecording: return 2
-        case .notifications: return 3
-        case .reminders: return 4
-        case .calendar: return 5
-        case .contacts: return 6
-        case .automation: return 7
+        case .automation: return 3
+        case .notifications: return 4
+        case .reminders: return 5
+        case .calendar: return 6
+        case .contacts: return 7
         }
     }
 
     static var onboardingSequence: [PermissionKind] {
-        allCases.sorted { $0.onboardingOrder < $1.onboardingOrder }
+        allCases.filter(\.showInOnboarding).sorted { $0.onboardingOrder < $1.onboardingOrder }
+    }
+
+    /// Permissions grouped for onboarding display
+    enum PermissionGroup: String, CaseIterable {
+        case required = "Required"
+        case optional = "Optional"
+
+        var permissions: [PermissionKind] {
+            switch self {
+            case .required: return [.microphone, .accessibility]
+            case .optional: return [.screenRecording, .automation]
+            }
+        }
     }
 }
 

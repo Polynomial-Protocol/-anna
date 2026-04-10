@@ -1,14 +1,101 @@
 import Foundation
 
-/// Wraps the local `claude` CLI in headless mode (--print) to handle complex
-/// automation tasks and teaching interactions. Claude Code has full access to
-/// bash, AppleScript, browser control, file operations, and web access.
+/// Supported AI CLI backends
+enum CLIBackend: String, CaseIterable, Codable, Sendable {
+    case claude = "Claude Code"
+    case codex = "Codex"
+
+    var binaryName: String {
+        switch self {
+        case .claude: return "claude"
+        case .codex: return "codex"
+        }
+    }
+
+    var installCommand: String {
+        switch self {
+        case .claude: return "curl -fsSL https://claude.ai/install.sh | sh"
+        case .codex: return "npm install -g @openai/codex"
+        }
+    }
+
+    var searchPaths: [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        switch self {
+        case .claude:
+            return [
+                "\(home)/.local/bin/claude",
+                "/usr/local/bin/claude",
+                "/opt/homebrew/bin/claude",
+            ]
+        case .codex:
+            return [
+                "/usr/local/bin/codex",
+                "/opt/homebrew/bin/codex",
+                "\(home)/.local/bin/codex",
+            ]
+        }
+    }
+}
+
+/// Detects which AI CLIs are installed and their paths
+struct CLIStatus: Sendable {
+    let backend: CLIBackend
+    let path: String?
+    var isInstalled: Bool { path != nil }
+
+    static func detect(_ backend: CLIBackend) -> CLIStatus {
+        let fm = FileManager.default
+        for candidate in backend.searchPaths {
+            if fm.isExecutableFile(atPath: candidate) {
+                return CLIStatus(backend: backend, path: candidate)
+            }
+        }
+        // Fallback: ask the login shell
+        if let shellPath = findViaShell(backend.binaryName) {
+            return CLIStatus(backend: backend, path: shellPath)
+        }
+        return CLIStatus(backend: backend, path: nil)
+    }
+
+    static func detectAll() -> [CLIStatus] {
+        CLIBackend.allCases.map { detect($0) }
+    }
+
+    static func bestAvailable() -> CLIStatus? {
+        // Prefer Claude, fall back to Codex
+        let all = detectAll()
+        return all.first(where: \.isInstalled)
+    }
+
+    private static func findViaShell(_ binary: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-l", "-c", "which \(binary)"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        try? process.run()
+        process.waitUntilExit()
+        if let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !output.isEmpty,
+           FileManager.default.isExecutableFile(atPath: output) {
+            return output
+        }
+        return nil
+    }
+}
+
+/// Wraps the local `claude` or `codex` CLI in headless mode to handle complex
+/// automation tasks and teaching interactions.
 actor ClaudeCLIService {
-    private let claudePath: String
+    private let cliPath: String
+    private let backend: CLIBackend
     private let timeoutSeconds: Double
 
     private let systemPrompt = """
-    You are Anna, the user's AI friend who lives on their Mac. You're not an assistant — you're a friend who happens to be really good with computers. You help them get things done AND show them cool stuff by pointing at things on their screen.
+    You are Anna, the user's AI friend who lives on their Mac. You're not an assistant — you're a friend who happens to be really good with computers. You help them get things done and guide them through anything on their screen.
 
     PERSONALITY:
     - Talk like a close friend would. Casual, warm, real. Short sentences.
@@ -76,35 +163,28 @@ actor ClaudeCLIService {
     - Always confirm what you created with a friendly message like "Set a reminder for 7am tomorrow."
     - If the Reminders or Calendar app isn't responding to AppleScript, suggest the user grant Automation permission for that app.
 
-    TEACHING MODE — THIS IS YOUR SUPERPOWER:
+    TEACHING MODE — VERBAL GUIDANCE:
     When the user asks "how do I...", "what is...", "show me...", "where is...", "teach me...", "find the...", or anything about navigating an app, finding a menu, locating a button, or learning how to do something:
 
     1. LOOK AT THE SCREENSHOT CAREFULLY. Identify the exact UI element they need.
-    2. Tell them exactly what to do in simple spoken words. Be specific: "Click the gear icon in the top right corner" not "Go to settings".
-    3. ALWAYS include [POINT:x,y:label] pointing at the exact element on screen.
-    4. If it's a multi-step process, guide them through the FIRST step and point at it. They can ask for the next step.
-    5. If the element isn't visible on screen, tell them what to do to make it visible (scroll down, open a menu, switch tabs), then point at the closest relevant element.
-
-    POINTING RULES:
-    - If the user is asking how to do something, looking for a menu, trying to find a button, or needs help navigating an app — ALWAYS point at the relevant element.
-    - Analyze the screenshot to find the EXACT pixel coordinates of the element.
-    - Only point within the center 60% of screen (between 20%-80% of both width and height). Avoid dock, menu bar, and screen edges.
-    - Coordinates are absolute screen pixels. The screenshot dimensions match the screen.
-    - Format: [POINT:x,y:label] where label describes what you're pointing at.
-    - If no pointing is needed (general knowledge, not about screen), append [POINT:none].
-    - When in doubt, POINT. It's better to point at something relevant than not point at all.
+    2. Describe WHERE the element is using clear spatial language: "top right corner", "the sidebar on the left", "third tab from the left", "the menu bar at the very top".
+    3. Describe WHAT it looks like: "a gear icon", "a blue button that says Save", "the three dots menu".
+    4. Guide ONE step at a time. Don't dump all steps at once. Let them follow each step before giving the next.
+    5. Pace your guidance — speak clearly and give them a moment. For example: "First, look at the top right of your screen. You'll see a gear icon. Click that." Then pause. Not: "Click the gear icon top right then go to preferences then click advanced then toggle the switch."
+    6. If the element isn't visible, tell them what to do first: "You'll need to scroll down a bit" or "Open the File menu at the top."
+    7. NEVER include [POINT:...] markers or pixel coordinates — just describe the location in plain words.
 
     SCREENSHOT CONTEXT:
     A screenshot of the user's current screen MAY be provided. If a screenshot path is included, this is what they're looking at RIGHT NOW.
     - Analyze it carefully to understand what app is open, what state it's in, and where UI elements are.
-    - Reference specific buttons, menus, tabs, and text visible in the screenshot.
-    - If they ask "where is X", find X in the screenshot and point at it with exact coordinates.
-    - If X isn't visible, explain what they need to do to find it and point at the closest relevant element.
-    - If NO screenshot is available (e.g. Screen Recording permission not granted), still help the user as best you can using general knowledge. Do NOT ask them to take a manual screenshot — just help without it.
+    - Reference specific buttons, menus, tabs, and text visible in the screenshot by describing their position and appearance.
+    - If NO screenshot is available, still help using general knowledge. Do NOT ask them to take a screenshot.
     """
 
-    init(claudePath: String = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin/claude", timeoutSeconds: Double = 300) {
-        self.claudePath = claudePath
+    init(timeoutSeconds: Double = 300) {
+        let status = CLIStatus.bestAvailable()
+        self.cliPath = status?.path ?? "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin/claude"
+        self.backend = status?.backend ?? .claude
         self.timeoutSeconds = timeoutSeconds
     }
 
@@ -113,9 +193,14 @@ actor ClaudeCLIService {
         screenshotPath: String? = nil,
         conversationContext: String? = nil
     ) async throws -> ClaudeCLIResult {
+        guard FileManager.default.isExecutableFile(atPath: cliPath) else {
+            throw AnnaError.claudeCLIFailed(
+                "No AI CLI found. Install Claude Code: curl -fsSL https://claude.ai/install.sh | sh"
+            )
+        }
+
         let startTime = Date()
 
-        // Build the prompt with context
         var fullPrompt = ""
         if let context = conversationContext {
             fullPrompt += "Previous conversation:\n\(context)\n\n"
@@ -126,7 +211,14 @@ actor ClaudeCLIService {
         fullPrompt += userRequest
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: claudePath)
+        process.executableURL = URL(fileURLWithPath: cliPath)
+
+        var env = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extraPaths = ["\(home)/.local/bin", "/usr/local/bin", "/opt/homebrew/bin"].joined(separator: ":")
+        env["PATH"] = "\(extraPaths):\(env["PATH"] ?? "/usr/bin:/bin")"
+        env["TERM"] = "dumb"
+        process.environment = env
         process.arguments = [
             "-p", fullPrompt,
             "--dangerously-skip-permissions",
@@ -135,10 +227,6 @@ actor ClaudeCLIService {
             "--model", "sonnet",
             "--max-turns", "3",
         ]
-
-        var env = ProcessInfo.processInfo.environment
-        env["TERM"] = "dumb"
-        process.environment = env
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

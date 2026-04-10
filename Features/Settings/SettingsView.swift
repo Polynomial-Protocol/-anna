@@ -6,6 +6,7 @@ struct SettingsView: View {
 
     @State private var availableVoices: [VoiceInfo] = []
     @State private var previewService = TTSService()
+    @State private var cliStatuses: [CLIStatus] = []
 
     var body: some View {
         ScrollView {
@@ -94,6 +95,57 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                section("AI Backend") {
+                    ForEach(cliStatuses, id: \.backend) { status in
+                        HStack(spacing: 10) {
+                            Image(systemName: "terminal")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white.opacity(0.35))
+                                .frame(width: 16)
+                            Text(status.backend.rawValue)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.6))
+                            Spacer()
+                            if status.isInstalled {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 9))
+                                    Text("Installed")
+                                        .font(.system(size: 10, weight: .medium))
+                                }
+                                .foregroundStyle(Color(hex: "69D3B0"))
+                            } else {
+                                Text("Not found")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.white.opacity(0.3))
+                            }
+                        }
+                    }
+                    Button {
+                        cliStatuses = CLIStatus.detectAll()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 9))
+                            Text("Refresh")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(.white.opacity(0.45))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(.white.opacity(0.06), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    if !cliStatuses.contains(where: \.isInstalled) {
+                        Text("Install Claude Code or Codex for smart features.\nClaude Code: curl -fsSL https://claude.ai/install.sh | sh\nCodex: npm install -g @openai/codex")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.25))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                }
+
                 section("Shortcuts") {
                     shortcutRow("Right \u{2318}", "Agent command")
                     shortcutRow("Right \u{2325}", "Dictation")
@@ -102,7 +154,10 @@ struct SettingsView: View {
             }
             .padding(24)
         }
-        .onAppear { availableVoices = TTSService.availableVoices() }
+        .onAppear {
+            availableVoices = TTSService.availableVoices()
+            cliStatuses = CLIStatus.detectAll()
+        }
     }
 
     // MARK: - Components

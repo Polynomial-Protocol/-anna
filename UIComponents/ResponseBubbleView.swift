@@ -21,7 +21,7 @@ final class ResponseBubblePanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         isOpaque = false
         hasShadow = false
-        ignoresMouseEvents = true  // Click-through: never blocks interaction
+        ignoresMouseEvents = true
     }
 
     override var canBecomeKey: Bool { false }
@@ -35,8 +35,8 @@ final class ResponseBubbleController: ObservableObject {
     @Published var isVisible = false
 
     private var panel: ResponseBubblePanel?
-    private let panelWidth: CGFloat = 480
-    private let panelHeight: CGFloat = 200
+    private let panelWidth: CGFloat = 340
+    private let panelHeight: CGFloat = 220
 
     func show(viewModel: AssistantViewModel) {
         if panel != nil {
@@ -52,10 +52,10 @@ final class ResponseBubbleController: ObservableObject {
                 .frame(width: panelWidth, height: panelHeight)
         )
 
-        // Position: bottom-center of main screen
+        // Position: top-right corner of main screen
         if let sf = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
-            let x = sf.midX - panelWidth / 2
-            let y = sf.minY + 60
+            let x = sf.maxX - panelWidth - 16
+            let y = sf.maxY - panelHeight - 8
             newPanel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
@@ -86,7 +86,7 @@ final class ResponseBubbleController: ObservableObject {
     }
 }
 
-// MARK: - Overlay Content (minimal floating text)
+// MARK: - Overlay Content
 
 struct ResponseOverlayContent: View {
     @ObservedObject var viewModel: AssistantViewModel
@@ -94,18 +94,7 @@ struct ResponseOverlayContent: View {
     @State private var previousStreamingText = ""
 
     var body: some View {
-        VStack(spacing: 8) {
-            Spacer()
-
-            // Response text (auto-dismiss after display)
-            if showResponse && !viewModel.streamingText.isEmpty {
-                responseView
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.96)).combined(with: .offset(y: 6)),
-                        removal: .opacity
-                    ))
-            }
-
+        VStack(alignment: .trailing, spacing: 8) {
             // Status indicator (listening, thinking, etc.)
             if viewModel.status.isActive {
                 statusView
@@ -114,13 +103,34 @@ struct ResponseOverlayContent: View {
                         removal: .opacity
                     ))
             }
+
+            // Response text — stays visible until idle
+            if showResponse && !viewModel.streamingText.isEmpty {
+                responseView
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(x: 10)),
+                        removal: .opacity
+                    ))
+            }
+
+            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .onChange(of: viewModel.streamingText) { _, newValue in
             if !newValue.isEmpty && newValue != previousStreamingText {
                 withAnimation(.easeOut(duration: 0.25)) { showResponse = true }
                 previousStreamingText = newValue
-                scheduleAutoDismiss(for: newValue)
+            }
+        }
+        .onChange(of: viewModel.status) { _, newStatus in
+            // Only dismiss response when fully idle (done speaking)
+            if newStatus == .idle && showResponse {
+                // Brief delay so the last text is readable
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    if self.viewModel.status == .idle {
+                        withAnimation(.easeOut(duration: 0.4)) { self.showResponse = false }
+                    }
+                }
             }
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.status)
@@ -130,30 +140,29 @@ struct ResponseOverlayContent: View {
 
     private var responseView: some View {
         Text(viewModel.streamingText)
-            .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(.white)
-            .multilineTextAlignment(.center)
-            .lineLimit(4)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.white.opacity(0.9))
+            .multilineTextAlignment(.trailing)
+            .lineLimit(6)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.black.opacity(0.45))
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.black.opacity(0.5))
                     .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(.ultraThinMaterial)
                             .opacity(0.3)
                     )
             )
-            .shadow(color: .black.opacity(0.2), radius: 20, y: 4)
-            .frame(maxWidth: 440)
+            .shadow(color: .black.opacity(0.15), radius: 12, y: 2)
+            .frame(maxWidth: 320, alignment: .trailing)
     }
 
     // MARK: - Status View
 
     private var statusView: some View {
         HStack(spacing: 6) {
-            // Animated dots for active states
             if viewModel.status == .listening {
                 pulsingDot
             } else if viewModel.status != .idle {
@@ -161,21 +170,21 @@ struct ResponseOverlayContent: View {
             }
 
             Text(viewModel.status.displayText)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.white.opacity(0.8))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .background(
             Capsule()
-                .fill(.black.opacity(0.35))
+                .fill(.black.opacity(0.4))
                 .background(
                     Capsule()
                         .fill(.ultraThinMaterial)
                         .opacity(0.2)
                 )
         )
-        .shadow(color: .black.opacity(0.15), radius: 12, y: 2)
+        .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
     }
 
     // MARK: - Animated Elements
@@ -184,7 +193,6 @@ struct ResponseOverlayContent: View {
         Circle()
             .fill(.red.opacity(0.8))
             .frame(width: 6, height: 6)
-            .scaleEffect(1.0)
             .modifier(PulseModifier())
     }
 
@@ -195,21 +203,6 @@ struct ResponseOverlayContent: View {
                     .fill(.white.opacity(0.6))
                     .frame(width: 4, height: 4)
                     .modifier(BounceDotModifier(delay: Double(i) * 0.15))
-            }
-        }
-    }
-
-    // MARK: - Auto-dismiss
-
-    private func scheduleAutoDismiss(for text: String) {
-        let wordCount = text.split(separator: " ").count
-        // 1.5s base + 0.1s per word, capped at 5s
-        let duration = min(5.0, 1.5 + Double(wordCount) * 0.1)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
-            // Only dismiss if the text hasn't changed (new response would reschedule)
-            if viewModel.streamingText == text || viewModel.status == .idle {
-                withAnimation(.easeOut(duration: 0.4)) { showResponse = false }
             }
         }
     }
