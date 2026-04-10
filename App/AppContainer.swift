@@ -118,7 +118,8 @@ final class AppContainer: ObservableObject {
             directExecutor: directExecutor,
             claudeCLI: claudeCLI,
             conversationStore: conversationStore,
-            knowledgeStore: knowledgeStore
+            knowledgeStore: knowledgeStore,
+            settingsProvider: { AppSettings.load() }
         )
 
         let logger = RuntimeLogger()
@@ -175,6 +176,7 @@ final class AppContainer: ObservableObject {
             self.logger.log("Right ⌘ pressed — starting agent capture", tag: "hotkey")
             self.assistantViewModel.beginCapture(mode: .assistantCommand)
             self.responseBubbleController.show(viewModel: self.assistantViewModel)
+            self.pointerOverlayManager.showOverlay(viewModel: self.assistantViewModel)
         }
         hotkeyMonitor.onCommandReleased = { [weak self] in
             guard let self else { return }
@@ -183,6 +185,7 @@ final class AppContainer: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
                 if !self.assistantViewModel.isCapturing {
                     self.responseBubbleController.hide()
+                    self.pointerOverlayManager.fadeOutAndHide()
                 }
             }
         }

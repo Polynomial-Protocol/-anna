@@ -100,6 +100,9 @@ struct PointerCoordinate: Sendable {
     let x: CGFloat
     let y: CGFloat
     let label: String?
+    /// The screenshot dimensions that the x,y coordinates are relative to.
+    let screenshotWidth: CGFloat
+    let screenshotHeight: CGFloat
 }
 
 // MARK: - Settings Persistence
@@ -117,6 +120,7 @@ struct AppSettings: Codable, Sendable {
     var lastSelectedTab: String = "Anna"
     var knowledgeBaseEnabled: Bool = true
     var clipboardCaptureEnabled: Bool = true
+    var aiProvider: String = AIProvider.anthropic.rawValue
 
     static let defaultValue = AppSettings()
 

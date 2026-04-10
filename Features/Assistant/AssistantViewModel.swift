@@ -125,7 +125,13 @@ final class AssistantViewModel: ObservableObject {
                         self.lastResponseTime = Date()
                         self.animateStreamingText(responseText)
 
-                        // Pointer overlay disabled — verbal guidance only
+                        // Point at UI elements when Claude provides coordinates
+                        if let pointer = result.2 {
+                            self.pointerOverlayManager.pointAt(pointer)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+                                self.pointerOverlayManager.hide()
+                            }
+                        }
 
                         // Speak the response if TTS is enabled
                         let settings = self.settingsProvider()
@@ -221,8 +227,7 @@ final class AssistantViewModel: ObservableObject {
                         self.animateStreamingText(responseText)
 
                         if let pointer = result.2 {
-                            let screenSize = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
-                            self.pointerOverlayManager.pointAt(pointer, screenSize: screenSize)
+                            self.pointerOverlayManager.pointAt(pointer)
                             DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
                                 self.pointerOverlayManager.hide()
                             }

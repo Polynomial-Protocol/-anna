@@ -1,221 +1,514 @@
 import SwiftUI
 import AppKit
 
+// MARK: - Buddy Navigation Mode
+
+enum BuddyNavigationMode {
+    case followingCursor
+    case navigatingToTarget
+    case pointingAtTarget
+}
+
 // MARK: - Pointer Overlay Manager
 
 @MainActor
 final class PointerOverlayManager: ObservableObject {
     @Published var isVisible = false
-    @Published var coordinate: PointerCoordinate?
-    @Published var bubbleText: String = ""
+    @Published var detectedElementScreenLocation: CGPoint?
+    @Published var detectedElementLabel: String?
 
-    private var panel: PointerOverlayPanel?
+    private var overlayWindows: [OverlayWindow] = []
+    private let elementDetector = ElementLocationDetector()
+    var hasShownBefore = false
 
-    func pointAt(_ coord: PointerCoordinate, screenSize: CGSize) {
-        coordinate = coord
-        bubbleText = coord.label ?? ""
+    /// Points the buddy cursor at a UI element.
+    ///
+    /// Uses a two-step approach (like Clicky's ElementLocationDetector):
+    /// 1. Try the Accessibility API to find the actual element at Claude's approximate
+    ///    coordinates and snap to its exact center — pixel-perfect.
+    /// 2. If AX fails (no permission, no element found), fall back to the raw
+    ///    coordinate mapping from screenshot pixels to display points.
+    func pointAt(_ coord: PointerCoordinate) {
+        // Step 1: Try Accessibility-based element detection for pixel-perfect accuracy
+        if let detected = elementDetector.detectElement(
+            screenshotX: coord.x,
+            screenshotY: coord.y,
+            screenshotWidth: coord.screenshotWidth,
+            screenshotHeight: coord.screenshotHeight,
+            label: coord.label
+        ) {
+            detectedElementLabel = detected.label ?? coord.label
+            detectedElementScreenLocation = detected.screenLocation
+            return
+        }
 
-        if panel == nil {
-            let newPanel = PointerOverlayPanel()
-            let hostView = NSHostingView(
-                rootView: PointerOverlayContent(manager: self)
+        // Step 2: Fallback — map screenshot pixels to display points directly
+        guard let screen = NSScreen.main else { return }
+
+        let scaleX = screen.frame.width / coord.screenshotWidth
+        let scaleY = screen.frame.height / coord.screenshotHeight
+
+        let displayX = coord.x * scaleX
+        let displayY = coord.y * scaleY
+
+        // Convert from top-left origin (screenshot) to AppKit bottom-left origin
+        let appKitX = screen.frame.origin.x + displayX
+        let appKitY = screen.frame.origin.y + (screen.frame.height - displayY)
+
+        detectedElementLabel = coord.label
+        detectedElementScreenLocation = CGPoint(x: appKitX, y: appKitY)
+    }
+
+    func clearDetectedElementLocation() {
+        detectedElementScreenLocation = nil
+        detectedElementLabel = nil
+    }
+
+    func showOverlay(viewModel: AssistantViewModel) {
+        hideOverlay()
+
+        let isFirst = !hasShownBefore
+        hasShownBefore = true
+
+        for screen in NSScreen.screens {
+            let window = OverlayWindow(screen: screen)
+            let contentView = BuddyCursorView(
+                screenFrame: screen.frame,
+                isFirstAppearance: isFirst,
+                viewModel: viewModel,
+                overlayManager: self
             )
-            newPanel.contentView = hostView
-            panel = newPanel
+            let hostView = NSHostingView(rootView: contentView)
+            hostView.frame = screen.frame
+            window.contentView = hostView
+            overlayWindows.append(window)
+            window.orderFrontRegardless()
         }
-
-        if let screen = NSScreen.main {
-            panel?.setFrame(screen.frame, display: true)
-        }
-
-        panel?.orderFront(nil)
         isVisible = true
     }
 
+    func hideOverlay() {
+        for window in overlayWindows {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+        overlayWindows.removeAll()
+        isVisible = false
+    }
+
+    func fadeOutAndHide(duration: TimeInterval = 0.4) {
+        let windowsToFade = overlayWindows
+        overlayWindows.removeAll()
+        isVisible = false
+
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = duration
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            for w in windowsToFade { w.animator().alphaValue = 0 }
+        }, completionHandler: {
+            for w in windowsToFade { w.orderOut(nil); w.contentView = nil }
+        })
+    }
+
     func hide() {
-        withAnimation(.easeOut(duration: 0.3)) {
-            isVisible = false
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            self?.panel?.orderOut(nil)
-            self?.coordinate = nil
-            self?.bubbleText = ""
-        }
+        fadeOutAndHide()
+        clearDetectedElementLocation()
     }
 }
 
-// MARK: - Transparent Full-Screen Panel
+// MARK: - Transparent Full-Screen Window
 
-final class PointerOverlayPanel: NSPanel {
-    init() {
-        super.init(
-            contentRect: NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        isFloatingPanel = true
-        level = .screenSaver
-        backgroundColor = .clear
+class OverlayWindow: NSWindow {
+    init(screen: NSScreen) {
+        super.init(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         isOpaque = false
-        hasShadow = false
+        backgroundColor = .clear
+        level = .screenSaver
         ignoresMouseEvents = true
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        isReleasedWhenClosed = false
+        hasShadow = false
+        hidesOnDeactivate = false
+        setFrame(screen.frame, display: true)
     }
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 }
 
-// MARK: - Pointer Content View
+// MARK: - Small Triangle Shape (Clicky-style)
 
-struct PointerOverlayContent: View {
-    @ObservedObject var manager: PointerOverlayManager
-
-    var body: some View {
-        GeometryReader { geo in
-            if manager.isVisible, let coord = manager.coordinate {
-                let screenX = coord.x
-                let screenY = geo.size.height - coord.y
-
-                ZStack {
-                    // Anna cursor pointer
-                    AnnaCursorView()
-                        .position(x: screenX, y: screenY)
-                        .transition(.scale.combined(with: .opacity))
-
-                    // Label bubble
-                    if !manager.bubbleText.isEmpty {
-                        Text(manager.bubbleText)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [
-                                                Color(red: 0.55, green: 0.4, blue: 0.9).opacity(0.85),
-                                                Color(red: 0.45, green: 0.7, blue: 0.95).opacity(0.85)
-                                            ],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
-                                    .shadow(color: Color(red: 0.55, green: 0.4, blue: 0.9).opacity(0.35), radius: 8)
-                            )
-                            .position(x: screenX + 30, y: screenY + 50)
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    }
-                }
-                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: screenX)
-                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: screenY)
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-// MARK: - Anna Cursor Design (Purple/Blue striped arrow with dark border)
-
-struct AnnaCursorView: View {
-    @State private var glowOpacity: Double = 0.4
-    @State private var appeared = false
-
-    // Colors matching the design
-    private let purple = Color(red: 0.68, green: 0.55, blue: 0.92)
-    private let lightBlue = Color(red: 0.52, green: 0.78, blue: 0.95)
-    private let borderColor = Color(red: 0.18, green: 0.18, blue: 0.2)
-
-    var body: some View {
-        ZStack {
-            // Outer glow
-            CursorArrowShape()
-                .fill(
-                    LinearGradient(
-                        colors: [purple.opacity(glowOpacity), lightBlue.opacity(glowOpacity)],
-                        startPoint: .topTrailing,
-                        endPoint: .bottomLeading
-                    )
-                )
-                .frame(width: 48, height: 56)
-                .blur(radius: 16)
-
-            // Dark border (slightly larger)
-            CursorArrowShape()
-                .fill(borderColor)
-                .frame(width: 42, height: 50)
-                .shadow(color: .black.opacity(0.4), radius: 4, y: 2)
-
-            // Inner fill with diagonal stripes
-            CursorArrowShape()
-                .fill(
-                    LinearGradient(
-                        colors: [purple, lightBlue, purple],
-                        startPoint: .topTrailing,
-                        endPoint: .bottomLeading
-                    )
-                )
-                .frame(width: 32, height: 40)
-
-            // White diagonal stripe accent
-            CursorArrowShape()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            .clear,
-                            .white.opacity(0.5),
-                            .clear,
-                        ],
-                        startPoint: UnitPoint(x: 0.3, y: 0),
-                        endPoint: UnitPoint(x: 0.7, y: 1)
-                    )
-                )
-                .frame(width: 32, height: 40)
-        }
-        .scaleEffect(appeared ? 1.0 : 0.3)
-        .opacity(appeared ? 1.0 : 0.0)
-        .onAppear {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                appeared = true
-            }
-            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-                glowOpacity = 0.7
-            }
-        }
-    }
-}
-
-// MARK: - Custom Arrow Cursor Shape
-
-struct CursorArrowShape: Shape {
+struct BuddyTriangle: Shape {
     func path(in rect: CGRect) -> Path {
-        // Classic macOS cursor arrow shape with a notch
-        let w = rect.width
-        let h = rect.height
-
+        let size = min(rect.width, rect.height)
+        let height = size * sqrt(3.0) / 2.0
         var path = Path()
-
-        // Tip of arrow (top-left)
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-
-        // Right edge down
-        path.addLine(to: CGPoint(x: rect.minX + w * 0.72, y: rect.minY + h * 0.58))
-
-        // Notch inward (where the tail meets the head)
-        path.addLine(to: CGPoint(x: rect.minX + w * 0.42, y: rect.minY + h * 0.52))
-
-        // Bottom tail point
-        path.addLine(to: CGPoint(x: rect.minX + w * 0.42, y: rect.maxY))
-
-        // Left side of tail
-        path.addLine(to: CGPoint(x: rect.minX + w * 0.18, y: rect.minY + h * 0.72))
-
-        // Back to left edge
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + h * 0.72))
-
+        path.move(to: CGPoint(x: rect.midX, y: rect.midY - height / 1.5))
+        path.addLine(to: CGPoint(x: rect.midX - size / 2, y: rect.midY + height / 3))
+        path.addLine(to: CGPoint(x: rect.midX + size / 2, y: rect.midY + height / 3))
         path.closeSubpath()
         return path
     }
+}
+
+// MARK: - Buddy Cursor View (one per screen)
+
+struct BuddyCursorView: View {
+    let screenFrame: CGRect
+    let isFirstAppearance: Bool
+    @ObservedObject var viewModel: AssistantViewModel
+    @ObservedObject var overlayManager: PointerOverlayManager
+
+    @State private var cursorPosition: CGPoint
+    @State private var isCursorOnThisScreen: Bool
+    @State private var cursorOpacity: Double = 0.0
+    @State private var timer: Timer?
+
+    // Navigation state
+    @State private var buddyMode: BuddyNavigationMode = .followingCursor
+    @State private var triangleRotation: Double = -35.0
+    @State private var buddyFlightScale: CGFloat = 1.0
+    @State private var isReturningToCursor = false
+    @State private var cursorAtNavStart: CGPoint = .zero
+    @State private var navTimer: Timer?
+
+    // Navigation bubble
+    @State private var navBubbleText: String = ""
+    @State private var navBubbleOpacity: Double = 0.0
+    @State private var navBubbleScale: CGFloat = 1.0
+    @State private var navBubbleSize: CGSize = .zero
+
+    private let buddyColor = Color(red: 0.45, green: 0.55, blue: 0.95)
+    private let pointerPhrases = ["right here!", "this one!", "over here!", "click this!", "here it is!", "found it!"]
+
+    init(screenFrame: CGRect, isFirstAppearance: Bool, viewModel: AssistantViewModel, overlayManager: PointerOverlayManager) {
+        self.screenFrame = screenFrame
+        self.isFirstAppearance = isFirstAppearance
+        self.viewModel = viewModel
+        self.overlayManager = overlayManager
+
+        let mouse = NSEvent.mouseLocation
+        let localX = mouse.x - screenFrame.origin.x
+        let localY = screenFrame.height - (mouse.y - screenFrame.origin.y)
+        _cursorPosition = State(initialValue: CGPoint(x: localX + 35, y: localY + 25))
+        _isCursorOnThisScreen = State(initialValue: screenFrame.contains(mouse))
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.001)
+
+            // Navigation bubble (when pointing at element)
+            if buddyMode == .pointingAtTarget && !navBubbleText.isEmpty {
+                Text(navBubbleText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(buddyColor)
+                            .shadow(color: buddyColor.opacity(0.5 + (1.0 - navBubbleScale)), radius: 6 + (1.0 - navBubbleScale) * 16)
+                    )
+                    .fixedSize()
+                    .scaleEffect(navBubbleScale)
+                    .opacity(navBubbleOpacity)
+                    .position(x: cursorPosition.x + 10 + (navBubbleSize.width / 2), y: cursorPosition.y + 18)
+                    .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.6), value: navBubbleScale)
+                    .overlay(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: BubbleSizeKey.self, value: geo.size)
+                        }
+                    )
+                    .onPreferenceChange(BubbleSizeKey.self) { navBubbleSize = $0 }
+            }
+
+            // Triangle cursor (idle + responding)
+            BuddyTriangle()
+                .fill(buddyColor)
+                .frame(width: 16, height: 16)
+                .rotationEffect(.degrees(triangleRotation))
+                .shadow(color: buddyColor, radius: 8 + (buddyFlightScale - 1.0) * 20)
+                .scaleEffect(buddyFlightScale)
+                .opacity(shouldShowTriangle ? cursorOpacity : 0)
+                .position(cursorPosition)
+                .animation(
+                    buddyMode == .followingCursor
+                        ? .spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0)
+                        : nil,
+                    value: cursorPosition
+                )
+                .animation(.easeIn(duration: 0.25), value: viewModel.status)
+                .animation(
+                    buddyMode == .navigatingToTarget ? nil : .easeInOut(duration: 0.3),
+                    value: triangleRotation
+                )
+
+            // Waveform (listening)
+            BuddyWaveformView()
+                .opacity(buddyVisible && viewModel.status == .listening ? cursorOpacity : 0)
+                .position(cursorPosition)
+                .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+                .animation(.easeIn(duration: 0.15), value: viewModel.status)
+
+            // Spinner (thinking/acting)
+            BuddySpinnerView()
+                .opacity(buddyVisible && (viewModel.status == .thinking || viewModel.status == .acting) ? cursorOpacity : 0)
+                .position(cursorPosition)
+                .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+                .animation(.easeIn(duration: 0.15), value: viewModel.status)
+        }
+        .frame(width: screenFrame.width, height: screenFrame.height)
+        .ignoresSafeArea()
+        .onAppear {
+            startTracking()
+            withAnimation(.easeIn(duration: 0.8)) { cursorOpacity = 1.0 }
+        }
+        .onDisappear {
+            timer?.invalidate()
+            navTimer?.invalidate()
+        }
+        .onChange(of: overlayManager.detectedElementScreenLocation) { _, newLoc in
+            guard let loc = newLoc else { return }
+            guard screenFrame.contains(loc) else { return }
+            startNavigatingToElement(screenLocation: loc)
+        }
+    }
+
+    private var buddyVisible: Bool {
+        switch buddyMode {
+        case .followingCursor:
+            if overlayManager.detectedElementScreenLocation != nil { return false }
+            return isCursorOnThisScreen
+        case .navigatingToTarget, .pointingAtTarget:
+            return true
+        }
+    }
+
+    private var shouldShowTriangle: Bool {
+        buddyVisible && (viewModel.status == .idle || viewModel.status == .speaking)
+    }
+
+    // MARK: - 60fps Cursor Tracking
+
+    private func startTracking() {
+        timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { _ in
+            let mouse = NSEvent.mouseLocation
+            self.isCursorOnThisScreen = self.screenFrame.contains(mouse)
+
+            if self.buddyMode == .navigatingToTarget && self.isReturningToCursor {
+                let current = self.toSwiftUI(mouse)
+                let dist = hypot(current.x - cursorAtNavStart.x, current.y - cursorAtNavStart.y)
+                if dist > 100 { cancelNavigation() }
+                return
+            }
+
+            if self.buddyMode != .followingCursor { return }
+
+            let local = self.toSwiftUI(mouse)
+            self.cursorPosition = CGPoint(x: local.x + 35, y: local.y + 25)
+        }
+    }
+
+    private func toSwiftUI(_ screenPoint: CGPoint) -> CGPoint {
+        let x = screenPoint.x - screenFrame.origin.x
+        let y = (screenFrame.origin.y + screenFrame.height) - screenPoint.y
+        return CGPoint(x: x, y: y)
+    }
+
+    // MARK: - Bezier Arc Flight
+
+    private func startNavigatingToElement(screenLocation: CGPoint) {
+        let target = toSwiftUI(screenLocation)
+        let offsetTarget = CGPoint(x: target.x + 8, y: target.y + 12)
+        let clamped = CGPoint(
+            x: max(20, min(offsetTarget.x, screenFrame.width - 20)),
+            y: max(20, min(offsetTarget.y, screenFrame.height - 20))
+        )
+
+        let mouse = NSEvent.mouseLocation
+        cursorAtNavStart = toSwiftUI(mouse)
+        buddyMode = .navigatingToTarget
+        isReturningToCursor = false
+
+        flyBezier(to: clamped) {
+            guard self.buddyMode == .navigatingToTarget else { return }
+            self.startPointing()
+        }
+    }
+
+    private func flyBezier(to destination: CGPoint, onComplete: @escaping () -> Void) {
+        navTimer?.invalidate()
+
+        let start = cursorPosition
+        let end = destination
+        let dist = hypot(end.x - start.x, end.y - start.y)
+        let duration = min(max(dist / 800.0, 0.6), 1.4)
+        let frameInterval = 1.0 / 60.0
+        let totalFrames = Int(duration / frameInterval)
+        var frame = 0
+
+        let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+        let arcHeight = min(dist * 0.2, 80)
+        let control = CGPoint(x: mid.x, y: mid.y - arcHeight)
+
+        navTimer = Timer.scheduledTimer(withTimeInterval: frameInterval, repeats: true) { _ in
+            frame += 1
+            if frame > totalFrames {
+                self.navTimer?.invalidate()
+                self.navTimer = nil
+                self.cursorPosition = end
+                self.buddyFlightScale = 1.0
+                onComplete()
+                return
+            }
+
+            let linear = Double(frame) / Double(totalFrames)
+            let t = linear * linear * (3.0 - 2.0 * linear) // smoothstep
+
+            let omt = 1.0 - t
+            let bx = omt * omt * start.x + 2 * omt * t * control.x + t * t * end.x
+            let by = omt * omt * start.y + 2 * omt * t * control.y + t * t * end.y
+            self.cursorPosition = CGPoint(x: bx, y: by)
+
+            // Tangent rotation
+            let tx = 2 * omt * (control.x - start.x) + 2 * t * (end.x - control.x)
+            let ty = 2 * omt * (control.y - start.y) + 2 * t * (end.y - control.y)
+            self.triangleRotation = atan2(ty, tx) * (180.0 / .pi) + 90.0
+
+            // Scale pulse
+            self.buddyFlightScale = 1.0 + sin(linear * .pi) * 0.3
+        }
+    }
+
+    // MARK: - Pointing
+
+    private func startPointing() {
+        buddyMode = .pointingAtTarget
+        triangleRotation = -35.0
+        navBubbleText = ""
+        navBubbleOpacity = 1.0
+        navBubbleScale = 0.5
+        navBubbleSize = .zero
+
+        let phrase = overlayManager.detectedElementLabel ?? pointerPhrases.randomElement() ?? "right here!"
+
+        streamBubble(phrase: phrase, index: 0) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                guard self.buddyMode == .pointingAtTarget else { return }
+                self.navBubbleOpacity = 0.0
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    guard self.buddyMode == .pointingAtTarget else { return }
+                    self.flyBackToCursor()
+                }
+            }
+        }
+    }
+
+    private func streamBubble(phrase: String, index: Int, onComplete: @escaping () -> Void) {
+        guard buddyMode == .pointingAtTarget, index < phrase.count else {
+            onComplete()
+            return
+        }
+        let charIdx = phrase.index(phrase.startIndex, offsetBy: index)
+        navBubbleText.append(phrase[charIdx])
+        if index == 0 { navBubbleScale = 1.0 }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 0.03...0.06)) {
+            self.streamBubble(phrase: phrase, index: index + 1, onComplete: onComplete)
+        }
+    }
+
+    private func flyBackToCursor() {
+        let mouse = NSEvent.mouseLocation
+        let swiftUI = toSwiftUI(mouse)
+        let target = CGPoint(x: swiftUI.x + 35, y: swiftUI.y + 25)
+        cursorAtNavStart = swiftUI
+        buddyMode = .navigatingToTarget
+        isReturningToCursor = true
+
+        flyBezier(to: target) { self.finishNavigation() }
+    }
+
+    private func cancelNavigation() {
+        navTimer?.invalidate()
+        navTimer = nil
+        navBubbleText = ""
+        navBubbleOpacity = 0.0
+        navBubbleScale = 1.0
+        buddyFlightScale = 1.0
+        finishNavigation()
+    }
+
+    private func finishNavigation() {
+        navTimer?.invalidate()
+        navTimer = nil
+        buddyMode = .followingCursor
+        isReturningToCursor = false
+        triangleRotation = -35.0
+        buddyFlightScale = 1.0
+        navBubbleText = ""
+        navBubbleOpacity = 0.0
+        navBubbleScale = 1.0
+        overlayManager.clearDetectedElementLocation()
+    }
+}
+
+// MARK: - Waveform (listening)
+
+private struct BuddyWaveformView: View {
+    private let barProfile: [CGFloat] = [0.4, 0.7, 1.0, 0.7, 0.4]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 36.0)) { ctx in
+            HStack(alignment: .center, spacing: 2) {
+                ForEach(0..<5, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(Color(red: 0.45, green: 0.55, blue: 0.95))
+                        .frame(width: 2, height: barHeight(i, ctx.date))
+                }
+            }
+            .shadow(color: Color(red: 0.45, green: 0.55, blue: 0.95).opacity(0.6), radius: 6)
+        }
+    }
+
+    private func barHeight(_ index: Int, _ date: Date) -> CGFloat {
+        let phase = CGFloat(date.timeIntervalSinceReferenceDate * 3.6) + CGFloat(index) * 0.35
+        let pulse = (sin(phase) + 1) / 2 * 3.0
+        return 3 + barProfile[index] * 6 + pulse
+    }
+}
+
+// MARK: - Spinner (thinking/processing)
+
+private struct BuddySpinnerView: View {
+    @State private var spinning = false
+
+    var body: some View {
+        Circle()
+            .trim(from: 0.15, to: 0.85)
+            .stroke(
+                AngularGradient(
+                    colors: [Color(red: 0.45, green: 0.55, blue: 0.95).opacity(0), Color(red: 0.45, green: 0.55, blue: 0.95)],
+                    center: .center
+                ),
+                style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+            )
+            .frame(width: 14, height: 14)
+            .rotationEffect(.degrees(spinning ? 360 : 0))
+            .shadow(color: Color(red: 0.45, green: 0.55, blue: 0.95).opacity(0.6), radius: 6)
+            .onAppear {
+                withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: false)) {
+                    spinning = true
+                }
+            }
+    }
+}
+
+// MARK: - Preference Key
+
+private struct BubbleSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
 }

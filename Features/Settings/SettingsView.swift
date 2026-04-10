@@ -4,6 +4,8 @@ struct SettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
 
     @State private var cliStatuses: [CLIStatus] = []
+    @State private var apiKeyText: String = ""
+    @State private var apiKeySaved = false
 
     var body: some View {
         ScrollView {
@@ -50,53 +52,119 @@ struct SettingsView: View {
                 }
 
                 section("AI Backend") {
-                    ForEach(cliStatuses, id: \.backend) { status in
-                        HStack(spacing: 10) {
-                            Image(systemName: "terminal")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.35))
-                                .frame(width: 16)
-                            Text(status.backend.rawValue)
-                                .font(.system(size: 12))
-                                .foregroundStyle(.white.opacity(0.6))
-                            Spacer()
-                            if status.isInstalled {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 9))
-                                    Text("Installed")
-                                        .font(.system(size: 10, weight: .medium))
+                    // Provider picker
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Provider")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.55))
+
+                        HStack(spacing: 6) {
+                            ForEach(AIProvider.allCases, id: \.self) { provider in
+                                let isSelected = viewModel.settings.aiProvider == provider.rawValue
+                                let isAvailable = provider.isAPI || cliStatuses.contains(where: { $0.backend.rawValue == provider.rawValue.replacingOccurrences(of: " CLI", with: "") && $0.isInstalled })
+
+                                Button {
+                                    viewModel.settings.aiProvider = provider.rawValue
+                                    viewModel.persist()
+                                    loadAPIKey(for: provider)
+                                } label: {
+                                    Text(provider.rawValue)
+                                        .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                                        .foregroundStyle(isSelected ? .white.opacity(0.85) : .white.opacity(isAvailable ? 0.5 : 0.25))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(
+                                            isSelected ? Color.white.opacity(0.1) : Color.white.opacity(0.03),
+                                            in: Capsule()
+                                        )
                                 }
-                                .foregroundStyle(Color(hex: "69D3B0"))
-                            } else {
-                                Text("Not found")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.white.opacity(0.3))
+                                .buttonStyle(.plain)
                             }
                         }
                     }
-                    Button {
-                        cliStatuses = CLIStatus.detectAll()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 9))
-                            Text("Refresh")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(.white.opacity(0.45))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(.white.opacity(0.06), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
 
-                    if !cliStatuses.contains(where: \.isInstalled) {
-                        Text("Install Claude Code or Codex for smart features.\nClaude Code: curl -fsSL https://claude.ai/install.sh | sh\nCodex: npm install -g @openai/codex")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.white.opacity(0.25))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
+                    // API key input (for API providers)
+                    let selectedProvider = AIProvider(rawValue: viewModel.settings.aiProvider) ?? .anthropic
+                    if selectedProvider.isAPI {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("API Key")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.55))
+
+                            HStack(spacing: 8) {
+                                SecureField("sk-...", text: $apiKeyText)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.7))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+
+                                Button {
+                                    APIKeyStore.save(key: apiKeyText, for: selectedProvider)
+                                    apiKeySaved = true
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { apiKeySaved = false }
+                                } label: {
+                                    Text(apiKeySaved ? "Saved!" : "Save")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(apiKeySaved ? Color(hex: "69D3B0") : .white.opacity(0.55))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(.white.opacity(0.07), in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            let hasKey = APIKeyStore.load(for: selectedProvider) != nil
+                            if hasKey {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 9))
+                                    Text("Key stored in Keychain")
+                                        .font(.system(size: 10))
+                                }
+                                .foregroundStyle(Color(hex: "69D3B0").opacity(0.7))
+                            }
+
+                            Text(selectedProvider == .anthropic
+                                ? "Get your API key at console.anthropic.com"
+                                : "Get your API key at platform.openai.com")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(0.25))
+                        }
+                    }
+
+                    // CLI status (for CLI providers)
+                    if selectedProvider.isCLI {
+                        let matching = cliStatuses.first(where: { $0.backend.rawValue == selectedProvider.rawValue.replacingOccurrences(of: " CLI", with: "") })
+                        if matching?.isInstalled == true {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 9))
+                                Text("Installed and ready")
+                                    .font(.system(size: 10))
+                            }
+                            .foregroundStyle(Color(hex: "69D3B0").opacity(0.7))
+                        } else {
+                            Text("Not installed. Run:\n\(selectedProvider == .claudeCLI ? "curl -fsSL https://claude.ai/install.sh | sh" : "npm install -g @openai/codex")")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(0.25))
+                                .textSelection(.enabled)
+                        }
+
+                        Button {
+                            cliStatuses = CLIStatus.detectAll()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise").font(.system(size: 9))
+                                Text("Refresh").font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundStyle(.white.opacity(0.45))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(.white.opacity(0.06), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -110,6 +178,8 @@ struct SettingsView: View {
         }
         .onAppear {
             cliStatuses = CLIStatus.detectAll()
+            let provider = AIProvider(rawValue: viewModel.settings.aiProvider) ?? .anthropic
+            loadAPIKey(for: provider)
         }
     }
 
@@ -143,6 +213,11 @@ struct SettingsView: View {
         .toggleStyle(.switch)
         .controlSize(.small)
         .tint(.white.opacity(0.35))
+    }
+
+    private func loadAPIKey(for provider: AIProvider) {
+        apiKeyText = APIKeyStore.load(for: provider) ?? ""
+        apiKeySaved = false
     }
 
     private func shortcutRow(_ key: String, _ desc: String) -> some View {

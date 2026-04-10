@@ -163,23 +163,40 @@ actor ClaudeCLIService {
     - Always confirm what you created with a friendly message like "Set a reminder for 7am tomorrow."
     - If the Reminders or Calendar app isn't responding to AppleScript, suggest the user grant Automation permission for that app.
 
-    TEACHING MODE — VERBAL GUIDANCE:
+    TEACHING & SCREEN GUIDANCE — THIS IS YOUR SUPERPOWER:
     When the user asks "how do I...", "what is...", "show me...", "where is...", "teach me...", "find the...", or anything about navigating an app, finding a menu, locating a button, or learning how to do something:
 
     1. LOOK AT THE SCREENSHOT CAREFULLY. Identify the exact UI element they need.
-    2. Describe WHERE the element is using clear spatial language: "top right corner", "the sidebar on the left", "third tab from the left", "the menu bar at the very top".
-    3. Describe WHAT it looks like: "a gear icon", "a blue button that says Save", "the three dots menu".
-    4. Guide ONE step at a time. Don't dump all steps at once. Let them follow each step before giving the next.
-    5. Pace your guidance — speak clearly and give them a moment. For example: "First, look at the top right of your screen. You'll see a gear icon. Click that." Then pause. Not: "Click the gear icon top right then go to preferences then click advanced then toggle the switch."
-    6. If the element isn't visible, tell them what to do first: "You'll need to scroll down a bit" or "Open the File menu at the top."
-    7. NEVER include [POINT:...] markers or pixel coordinates — just describe the location in plain words.
+    2. Tell them what to do in casual, simple spoken words. One step at a time.
+    3. ALWAYS point at the element using [POINT:x,y:label] at the END of your response.
+    4. Be specific: "click the gear icon in the top right" not "go to settings".
+    5. If it's multi-step, guide them through ONE step, point at it. They'll ask for the next step.
+    6. If the element isn't visible, tell them what to do first: "scroll down a bit" or "open the file menu up top."
+    7. Pace your guidance — keep it short and clear so they can follow along.
+
+    POINTING RULES:
+    - Analyze the screenshot to find the EXACT pixel coordinates of the UI element.
+    - Coordinates are in the screenshot's own pixel space, with (0,0) at the TOP-LEFT corner.
+    - The screenshot dimensions will be provided in the message — use them to calibrate your coordinates.
+    - X increases going RIGHT, Y increases going DOWN.
+    - Format: [POINT:x,y:label] where label is a short description of what you're pointing at.
+    - ALWAYS put the POINT tag at the very END of your response, on its own.
+    - Examples: [POINT:450,120:Settings gear icon] or [POINT:200,350:New Project button]
+    - If nothing to point at (general knowledge question), use [POINT:none]
+    - When in doubt, POINT. It's better to point at something relevant than not point at all.
+    - Stay within the visible area — avoid pointing at dock, menu bar edges, or offscreen.
+    - Be precise: aim for the CENTER of the button, icon, or element, not its edge.
 
     SCREENSHOT CONTEXT:
     A screenshot of the user's current screen MAY be provided. If a screenshot path is included, this is what they're looking at RIGHT NOW.
     - Analyze it carefully to understand what app is open, what state it's in, and where UI elements are.
-    - Reference specific buttons, menus, tabs, and text visible in the screenshot by describing their position and appearance.
+    - Reference specific buttons, menus, tabs, and text visible in the screenshot.
+    - If they ask "where is X", find X in the screenshot and point at it.
+    - If X isn't visible, explain what they need to do to find it.
     - If NO screenshot is available, still help using general knowledge. Do NOT ask them to take a screenshot.
     """
+
+    func getSystemPrompt() -> String { systemPrompt }
 
     init(timeoutSeconds: Double = 300) {
         let status = CLIStatus.bestAvailable()
@@ -191,6 +208,8 @@ actor ClaudeCLIService {
     func execute(
         userRequest: String,
         screenshotPath: String? = nil,
+        screenshotWidth: Int = 0,
+        screenshotHeight: Int = 0,
         conversationContext: String? = nil
     ) async throws -> ClaudeCLIResult {
         guard FileManager.default.isExecutableFile(atPath: cliPath) else {
@@ -206,7 +225,7 @@ actor ClaudeCLIService {
             fullPrompt += "Previous conversation:\n\(context)\n\n"
         }
         if let screenshot = screenshotPath {
-            fullPrompt += "(A screenshot of the user's current screen has been saved at: \(screenshot). Analyze it for context.)\n\n"
+            fullPrompt += "(A screenshot of the user's current screen has been saved at: \(screenshot). The screenshot is \(screenshotWidth)x\(screenshotHeight) pixels. Origin (0,0) is the top-left corner. When using [POINT:x,y:label], x ranges from 0 to \(screenshotWidth) and y ranges from 0 to \(screenshotHeight). Analyze it for context.)\n\n"
         }
         fullPrompt += userRequest
 

@@ -11,7 +11,7 @@ Anna runs locally on your Mac. She listens when you hold a hotkey, understands y
 - **Hold Right ⌥** — Dictate text into any focused input field
 - **⌘⇧Space** — Toggle the text bar for typed commands
 
-### Visual Guidance (Clicky-style)
+### Visual Guidance 
 - Blue triangle cursor points at UI elements on your screen
 - Animated pointer with label bubbles
 - Coordinates parsed from Claude's response (`[POINT:x,y:label]`)

@@ -10,6 +10,7 @@ actor AssistantEngine {
     private let claudeCLI: ClaudeCLIService
     private let conversationStore: ConversationStore
     private let knowledgeStore: KnowledgeStore
+    private let settingsProvider: () -> AppSettings
 
     private var activeMode: CaptureMode?
 
@@ -21,7 +22,8 @@ actor AssistantEngine {
         directExecutor: DirectActionExecutor,
         claudeCLI: ClaudeCLIService,
         conversationStore: ConversationStore,
-        knowledgeStore: KnowledgeStore
+        knowledgeStore: KnowledgeStore,
+        settingsProvider: @escaping () -> AppSettings
     ) {
         self.audioCaptureService = audioCaptureService
         self.voiceService = voiceService
@@ -31,6 +33,7 @@ actor AssistantEngine {
         self.claudeCLI = claudeCLI
         self.conversationStore = conversationStore
         self.knowledgeStore = knowledgeStore
+        self.settingsProvider = settingsProvider
     }
 
     func beginCapture(mode: CaptureMode) async throws {
@@ -69,71 +72,7 @@ actor AssistantEngine {
                 return (transcript.text, outcome, nil)
 
             case .agent(let request):
-                // Capture screenshot for context
-                var screenshotPath: String? = nil
-                var screenshotUnavailableReason: String? = nil
-                do {
-                    let fileURL = try await screenCaptureService.captureToFile()
-                    screenshotPath = fileURL.path
-                } catch {
-                    // Tell Claude why the screenshot is missing so it can guide accordingly
-                    if !CGPreflightScreenCaptureAccess() {
-                        CGRequestScreenCaptureAccess()
-                        screenshotUnavailableReason = "Screen Recording permission has not been granted yet. Anna just prompted the user to enable it in System Settings > Privacy & Security > Screen Recording. For now, help without visual context."
-                    } else {
-                        screenshotUnavailableReason = "Screenshot capture failed unexpectedly. Help without visual context."
-                    }
-                }
-
-                // Add to conversation history
-                await conversationStore.append(ConversationTurn(
-                    role: .user,
-                    content: request,
-                    timestamp: Date()
-                ))
-
-                // Build context with history and knowledge
-                let historyContext = await buildHistoryContext()
-                let knowledgeContext = await buildKnowledgeContext(for: request)
-
-                var fullContext = historyContext ?? ""
-                if let knowledge = knowledgeContext {
-                    fullContext += (fullContext.isEmpty ? "" : "\n\n") + knowledge
-                }
-                if let reason = screenshotUnavailableReason {
-                    fullContext += (fullContext.isEmpty ? "" : "\n\n") + reason
-                }
-
-                let result = try await claudeCLI.execute(
-                    userRequest: request,
-                    screenshotPath: screenshotPath,
-                    conversationContext: fullContext.isEmpty ? nil : fullContext
-                )
-
-                // Parse pointer coordinates from response
-                let pointer = Self.parsePointerCoordinate(from: result.text)
-
-                // Clean the response text (remove POINT markers)
-                let cleanText = Self.cleanResponseText(result.text)
-
-                // Add assistant response to history
-                await conversationStore.append(ConversationTurn(
-                    role: .assistant,
-                    content: cleanText,
-                    timestamp: Date()
-                ))
-
-                // Store conversation in knowledge dump
-                await knowledgeStore.addEntry(
-                    content: "Q: \(request)\nA: \(cleanText)",
-                    source: .conversation,
-                    title: String(request.prefix(80))
-                )
-
-                let outcome: AutomationOutcome = result.success
-                    ? .completed(summary: cleanText, openedURL: nil)
-                    : .blocked(summary: cleanText)
-                return (transcript.text, outcome, pointer)
+                return try await executeAgent(request: request, transcript: transcript.text)
             }
         }
     }
@@ -147,57 +86,117 @@ actor AssistantEngine {
             return (text, outcome, nil)
 
         case .agent(let request):
-            var screenshotPath: String? = nil
-            var screenshotUnavailableReason: String? = nil
-            do {
-                let fileURL = try await screenCaptureService.captureToFile()
-                screenshotPath = fileURL.path
-            } catch {
-                if !CGPreflightScreenCaptureAccess() {
-                    CGRequestScreenCaptureAccess()
-                    screenshotUnavailableReason = "Screen Recording permission has not been granted yet."
-                } else {
-                    screenshotUnavailableReason = "Screenshot capture failed unexpectedly."
-                }
-            }
+            return try await executeAgent(request: request, transcript: text)
+        }
+    }
 
-            await conversationStore.append(ConversationTurn(
-                role: .user, content: request, timestamp: Date()
-            ))
+    // MARK: - Agent Execution (shared by voice and text paths)
 
-            let historyContext = await buildHistoryContext()
-            let knowledgeContext = await buildKnowledgeContext(for: request)
-            var fullContext = historyContext ?? ""
-            if let knowledge = knowledgeContext {
-                fullContext += (fullContext.isEmpty ? "" : "\n\n") + knowledge
-            }
-            if let reason = screenshotUnavailableReason {
-                fullContext += (fullContext.isEmpty ? "" : "\n\n") + reason
-            }
+    private func executeAgent(request: String, transcript: String) async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
+        // Capture screenshot and its actual pixel dimensions
+        var screenshotPath: String? = nil
+        var screenshotPixelWidth: Int = 0
+        var screenshotPixelHeight: Int = 0
+        var screenshotUnavailableReason: String? = nil
 
-            let result = try await claudeCLI.execute(
+        do {
+            let capture = try await screenCaptureService.captureToFile()
+            screenshotPath = capture.url.path
+            screenshotPixelWidth = capture.widthPixels
+            screenshotPixelHeight = capture.heightPixels
+        } catch {
+            if !CGPreflightScreenCaptureAccess() {
+                CGRequestScreenCaptureAccess()
+                screenshotUnavailableReason = "Screen Recording permission has not been granted yet. Anna just prompted the user to enable it in System Settings > Privacy & Security > Screen Recording. For now, help without visual context."
+            } else {
+                screenshotUnavailableReason = "Screenshot capture failed unexpectedly. Help without visual context."
+            }
+        }
+
+        await conversationStore.append(ConversationTurn(
+            role: .user, content: request, timestamp: Date()
+        ))
+
+        let historyContext = await buildHistoryContext()
+        let knowledgeContext = await buildKnowledgeContext(for: request)
+
+        var fullContext = historyContext ?? ""
+        if let knowledge = knowledgeContext {
+            fullContext += (fullContext.isEmpty ? "" : "\n\n") + knowledge
+        }
+        if let reason = screenshotUnavailableReason {
+            fullContext += (fullContext.isEmpty ? "" : "\n\n") + reason
+        }
+
+        let result = try await executeWithBackend(
+            request: request,
+            screenshotPath: screenshotPath,
+            screenshotWidth: screenshotPixelWidth,
+            screenshotHeight: screenshotPixelHeight,
+            conversationContext: fullContext.isEmpty ? nil : fullContext
+        )
+
+        let pointer = Self.parsePointerCoordinate(
+            from: result.text,
+            screenshotWidth: CGFloat(screenshotPixelWidth),
+            screenshotHeight: CGFloat(screenshotPixelHeight)
+        )
+        let cleanText = Self.cleanResponseText(result.text)
+
+        await conversationStore.append(ConversationTurn(
+            role: .assistant, content: cleanText, timestamp: Date()
+        ))
+
+        await knowledgeStore.addEntry(
+            content: "Q: \(request)\nA: \(cleanText)",
+            source: .conversation,
+            title: String(request.prefix(80))
+        )
+
+        let outcome: AutomationOutcome = result.success
+            ? .completed(summary: cleanText, openedURL: nil)
+            : .blocked(summary: cleanText)
+        return (transcript, outcome, pointer)
+    }
+
+    // MARK: - Backend Routing
+
+    private func executeWithBackend(
+        request: String,
+        screenshotPath: String?,
+        screenshotWidth: Int,
+        screenshotHeight: Int,
+        conversationContext: String?
+    ) async throws -> ClaudeCLIResult {
+        let settings = settingsProvider()
+        let provider = AIProvider(rawValue: settings.aiProvider) ?? .anthropic
+
+        if provider.isAPI {
+            guard let apiKey = APIKeyStore.load(for: provider), !apiKey.isEmpty else {
+                throw AnnaError.claudeCLIFailed(
+                    "No API key set for \(provider.rawValue). Add it in Anna Settings \u{2192} AI Backend."
+                )
+            }
+            let apiService = AIAPIService(
+                provider: provider,
+                apiKey: apiKey,
+                systemPrompt: await claudeCLI.getSystemPrompt()
+            )
+            return try await apiService.execute(
                 userRequest: request,
                 screenshotPath: screenshotPath,
-                conversationContext: fullContext.isEmpty ? nil : fullContext
+                screenshotWidth: screenshotWidth,
+                screenshotHeight: screenshotHeight,
+                conversationContext: conversationContext
             )
-
-            let pointer = Self.parsePointerCoordinate(from: result.text)
-            let cleanText = Self.cleanResponseText(result.text)
-
-            await conversationStore.append(ConversationTurn(
-                role: .assistant, content: cleanText, timestamp: Date()
-            ))
-
-            await knowledgeStore.addEntry(
-                content: "Q: \(request)\nA: \(cleanText)",
-                source: .conversation,
-                title: String(request.prefix(80))
+        } else {
+            return try await claudeCLI.execute(
+                userRequest: request,
+                screenshotPath: screenshotPath,
+                screenshotWidth: screenshotWidth,
+                screenshotHeight: screenshotHeight,
+                conversationContext: conversationContext
             )
-
-            let outcome: AutomationOutcome = result.success
-                ? .completed(summary: cleanText, openedURL: nil)
-                : .blocked(summary: cleanText)
-            return (text, outcome, pointer)
         }
     }
 
@@ -232,8 +231,10 @@ actor AssistantEngine {
 
     // MARK: - Pointer Parsing
 
-    /// Parses [POINT:x,y:label] or [POINT:none] from Claude response text.
-    static func parsePointerCoordinate(from text: String) -> PointerCoordinate? {
+    /// Parses [POINT:x,y:label] from Claude response text, attaching screenshot dimensions.
+    static func parsePointerCoordinate(from text: String, screenshotWidth: CGFloat, screenshotHeight: CGFloat) -> PointerCoordinate? {
+        guard screenshotWidth > 0, screenshotHeight > 0 else { return nil }
+
         let pattern = #"\[POINT:(\d+)\s*,\s*(\d+)(?::([^\]]+))?\]"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else {
@@ -247,12 +248,22 @@ actor AssistantEngine {
             return nil
         }
 
+        // Clamp to valid range
+        let clampedX = min(max(CGFloat(x), 0), screenshotWidth)
+        let clampedY = min(max(CGFloat(y), 0), screenshotHeight)
+
         var label: String? = nil
         if let labelRange = Range(match.range(at: 3), in: text) {
             label = String(text[labelRange])
         }
 
-        return PointerCoordinate(x: CGFloat(x), y: CGFloat(y), label: label)
+        return PointerCoordinate(
+            x: clampedX,
+            y: clampedY,
+            label: label,
+            screenshotWidth: screenshotWidth,
+            screenshotHeight: screenshotHeight
+        )
     }
 
     /// Removes [POINT:...] markers from text for display/TTS.

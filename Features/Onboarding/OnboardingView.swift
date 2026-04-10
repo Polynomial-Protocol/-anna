@@ -10,6 +10,9 @@ struct OnboardingView: View {
     @State private var cliStatuses: [CLIStatus] = []
     @State private var cliChecking = false
     @State private var hasPlayedWelcome = false
+    @State private var selectedProvider: AIProvider = .anthropic
+    @State private var apiKeyText: String = ""
+    @State private var apiKeySaved = false
     private let ambientPlayer = AmbientPadPlayer()
 
     var body: some View {
@@ -47,6 +50,12 @@ struct OnboardingView: View {
         .onAppear {
             withAnimation(.easeOut(duration: 0.5)) { appeared = true }
             refreshCLI()
+            // Load saved provider selection
+            let saved = AppSettings.load().aiProvider
+            if let provider = AIProvider(rawValue: saved) {
+                selectedProvider = provider
+                if provider.isAPI { apiKeyText = APIKeyStore.load(for: provider) ?? "" }
+            }
             // Play ambient pad + welcome voice on first appearance
             if !hasPlayedWelcome {
                 hasPlayedWelcome = true
@@ -117,71 +126,179 @@ struct OnboardingView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Step 2: CLI Check
+    // MARK: - Step 2: Choose AI Backend
 
     private var cliCheckStep: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 14) {
-                Image(systemName: "terminal.fill")
+        VStack(spacing: 20) {
+            VStack(spacing: 10) {
+                Image(systemName: "brain.head.profile")
                     .font(.system(size: 28, weight: .light))
                     .foregroundStyle(.white.opacity(0.6))
                     .frame(width: 52, height: 52)
                     .background(.white.opacity(0.04), in: Circle())
 
-                Text("AI Backend")
+                Text("Choose your AI")
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.white.opacity(0.85))
 
-                Text("Anna uses Claude Code or Codex to handle complex tasks like writing, research, and app control.")
+                Text("Pick how Anna connects to AI. You can change this anytime in Settings.")
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.35))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
             }
 
-            // CLI status list
-            VStack(spacing: 1) {
-                ForEach(cliStatuses, id: \.backend) { status in
-                    cliRow(status)
-                }
+            // Provider cards
+            VStack(spacing: 6) {
+                // API options (recommended)
+                Text("WITH API KEY")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.25))
+                    .tracking(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                providerCard(
+                    provider: .anthropic,
+                    icon: "sparkle",
+                    subtitle: "Best quality. Needs an Anthropic API key.",
+                    badge: "Recommended"
+                )
+                providerCard(
+                    provider: .openai,
+                    icon: "bubble.left.fill",
+                    subtitle: "GPT-4o. Needs an OpenAI API key.",
+                    badge: nil
+                )
+
+                // CLI options
+                Text("WITH CLI TOOL")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.25))
+                    .tracking(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 6)
+
+                let claudeInstalled = cliStatuses.first(where: { $0.backend == .claude })?.isInstalled == true
+                let codexInstalled = cliStatuses.first(where: { $0.backend == .codex })?.isInstalled == true
+
+                providerCard(
+                    provider: .claudeCLI,
+                    icon: "terminal",
+                    subtitle: claudeInstalled ? "Installed and ready." : "Not installed.",
+                    badge: claudeInstalled ? "Installed" : nil
+                )
+                providerCard(
+                    provider: .codexCLI,
+                    icon: "terminal",
+                    subtitle: codexInstalled ? "Installed and ready." : "Not installed.",
+                    badge: codexInstalled ? "Installed" : nil
+                )
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-            // Actions
-            let anyInstalled = cliStatuses.contains(where: \.isInstalled)
-
-            if !anyInstalled {
-                VStack(spacing: 12) {
-                    Text("Install at least one to enable smart features.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color(hex: "FFC764").opacity(0.7))
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        installHint("Claude Code", "curl -fsSL https://claude.ai/install.sh | sh")
-                        installHint("Codex", "npm install -g @openai/codex")
-                    }
-                }
-            }
-
-            // Refresh button
-            Button {
-                refreshCLI()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: cliChecking ? "arrow.clockwise" : "arrow.clockwise")
-                        .font(.system(size: 10))
-                        .rotationEffect(.degrees(cliChecking ? 360 : 0))
-                        .animation(cliChecking ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: cliChecking)
-                    Text("Refresh")
+            // API key input (shown for API providers)
+            if selectedProvider.isAPI {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("API Key")
                         .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.45))
+
+                    HStack(spacing: 6) {
+                        SecureField(selectedProvider == .anthropic ? "sk-ant-..." : "sk-...", text: $apiKeyText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+
+                        Button {
+                            APIKeyStore.save(key: apiKeyText, for: selectedProvider)
+                            apiKeySaved = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { apiKeySaved = false }
+                        } label: {
+                            Text(apiKeySaved ? "Saved!" : "Save")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(apiKeySaved ? Color(hex: "69D3B0") : .white.opacity(0.55))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(.white.opacity(0.07), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Text(selectedProvider == .anthropic
+                        ? "Get your key at console.anthropic.com"
+                        : "Get your key at platform.openai.com")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.2))
                 }
-                .foregroundStyle(.white.opacity(0.45))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(.white.opacity(0.06), in: Capsule())
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.plain)
         }
+    }
+
+    private func providerCard(provider: AIProvider, icon: String, subtitle: String, badge: String?) -> some View {
+        let isSelected = selectedProvider == provider
+
+        return Button {
+            withAnimation(.easeOut(duration: 0.15)) {
+                selectedProvider = provider
+                // Save selection immediately
+                var settings = AppSettings.load()
+                settings.aiProvider = provider.rawValue
+                settings.save()
+                // Load API key if switching to API provider
+                if provider.isAPI {
+                    apiKeyText = APIKeyStore.load(for: provider) ?? ""
+                    apiKeySaved = false
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(isSelected ? .white.opacity(0.8) : .white.opacity(0.35))
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(provider.rawValue)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(isSelected ? .white.opacity(0.85) : .white.opacity(0.55))
+
+                        if let badge {
+                            Text(badge)
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(badge == "Recommended" ? Color(hex: "69D3B0").opacity(0.8) : Color(hex: "69D3B0").opacity(0.7))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color(hex: "69D3B0").opacity(0.1), in: Capsule())
+                        }
+                    }
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.25))
+                }
+
+                Spacer()
+
+                Circle()
+                    .fill(isSelected ? .white.opacity(0.8) : .clear)
+                    .frame(width: 8, height: 8)
+                    .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 1))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? .white.opacity(0.06) : .white.opacity(0.02))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(isSelected ? .white.opacity(0.1) : .clear, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Step 3: Permissions (Grouped)
@@ -369,50 +486,6 @@ struct OnboardingView: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-    }
-
-    private func cliRow(_ status: CLIStatus) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "terminal")
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.4))
-                .frame(width: 18)
-
-            Text(status.backend.rawValue)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.7))
-
-            Spacer()
-
-            if status.isInstalled {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10))
-                    Text("Installed")
-                        .font(.system(size: 10, weight: .medium))
-                }
-                .foregroundStyle(Color(hex: "69D3B0"))
-            } else {
-                Text("Not found")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.3))
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.white.opacity(0.03))
-    }
-
-    private func installHint(_ name: String, _ command: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(name)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.4))
-            Text(command)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.5))
-                .textSelection(.enabled)
         }
     }
 
