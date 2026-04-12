@@ -129,35 +129,8 @@ final class AssistantViewModel: ObservableObject {
                         self.lastResponseTime = Date()
                         self.animateStreamingText(responseText)
 
-                        // Point at UI elements when Claude provides coordinates
-                        if let pointer = result.2 {
-                            self.pointerOverlayManager.pointAt(pointer)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
-                                self.pointerOverlayManager.hide()
-                            }
-                        }
-
-                        // Speak the response if TTS is enabled
-                        let settings = self.settingsProvider()
-                        if settings.ttsEnabled {
-                            self.status = .speaking
-                            self.ttsService.speak(responseText, rate: settings.ttsRate, voiceIdentifier: settings.ttsVoiceIdentifier)
-                            // Reset status when done speaking
-                            Task {
-                                while self.ttsService.isSpeaking {
-                                    try? await Task.sleep(nanoseconds: 200_000_000)
-                                }
-                                await MainActor.run {
-                                    if self.status == .speaking {
-                                        self.status = .idle
-                                        self.statusLine = "All done — I'm here if you need me."
-                                    }
-                                }
-                            }
-                        } else {
-                            self.status = .idle
-                            self.statusLine = "All done — I'm here if you need me."
-                        }
+                        // Handle pointer/click and TTS
+                        self.handlePointerAndSpeak(pointer: result.2, responseText: responseText)
                     } else {
                         self.status = .idle
                         self.statusLine = "All done — I'm here if you need me."
@@ -230,32 +203,7 @@ final class AssistantViewModel: ObservableObject {
                         self.lastResponseTime = Date()
                         self.animateStreamingText(responseText)
 
-                        if let pointer = result.2 {
-                            self.pointerOverlayManager.pointAt(pointer)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                                self.pointerOverlayManager.hide()
-                            }
-                        }
-
-                        let settings = self.settingsProvider()
-                        if settings.ttsEnabled {
-                            self.status = .speaking
-                            self.ttsService.speak(responseText, rate: settings.ttsRate, voiceIdentifier: settings.ttsVoiceIdentifier)
-                            Task {
-                                while self.ttsService.isSpeaking {
-                                    try? await Task.sleep(nanoseconds: 200_000_000)
-                                }
-                                await MainActor.run {
-                                    if self.status == .speaking {
-                                        self.status = .idle
-                                        self.statusLine = "All done — I'm here if you need me."
-                                    }
-                                }
-                            }
-                        } else {
-                            self.status = .idle
-                            self.statusLine = "All done — I'm here if you need me."
-                        }
+                        self.handlePointerAndSpeak(pointer: result.2, responseText: responseText)
                     } else {
                         self.status = .idle
                         self.statusLine = "All done — I'm here if you need me."
@@ -269,6 +217,119 @@ final class AssistantViewModel: ObservableObject {
                     let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                     self.logger?.log("Text action failed: \(errorMsg)", tag: "action")
                     self.pushEvent(title: "Action failed", body: errorMsg, tone: .failure)
+                }
+            }
+        }
+    }
+
+    // MARK: - Pointer, Click & Guided Mode
+
+    private var guidedModeStepCount = 0
+    private let maxGuidedSteps = 8
+
+    private func handlePointerAndSpeak(pointer: PointerCoordinate?, responseText: String) {
+        if let pointer = pointer {
+            self.pointerOverlayManager.pointAt(pointer)
+
+            let isClick = pointer.action == .click
+            let clickLocation = isClick ? PointerOverlayManager.screenLocation(for: pointer) : nil
+
+            // Fly to target, then click after the flight animation settles
+            let flightDuration: Double = 1.5
+            if isClick, let loc = clickLocation {
+                DispatchQueue.main.asyncAfter(deadline: .now() + flightDuration) {
+                    self.pointerOverlayManager.clickRippleAt = loc
+                    ClickSimulator.click(at: loc)
+                    self.logger?.log("Guided click at (\(Int(loc.x)), \(Int(loc.y))): \(pointer.label ?? "element")", tag: "guide")
+                }
+            }
+
+            // Hide pointer after flight + dwell
+            let hideDelay: Double = isClick ? flightDuration + 2.0 : 6.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + hideDelay) {
+                self.pointerOverlayManager.hide()
+            }
+
+            // For CLICK actions: auto-continue the guided walkthrough
+            if isClick {
+                self.guidedModeStepCount += 1
+                if self.guidedModeStepCount < self.maxGuidedSteps {
+                    let continueDelay = flightDuration + 2.5
+                    DispatchQueue.main.asyncAfter(deadline: .now() + continueDelay) {
+                        self.continueGuidedWalkthrough()
+                    }
+                } else {
+                    self.guidedModeStepCount = 0
+                }
+            } else {
+                self.guidedModeStepCount = 0
+            }
+        }
+
+        // Speak the response
+        let settings = self.settingsProvider()
+        if settings.ttsEnabled {
+            self.status = .speaking
+            self.ttsService.speak(responseText, rate: settings.ttsRate, voiceIdentifier: settings.ttsVoiceIdentifier)
+            Task {
+                while self.ttsService.isSpeaking {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                await MainActor.run {
+                    if self.status == .speaking {
+                        self.status = .idle
+                        self.statusLine = "All done — I'm here if you need me."
+                    }
+                }
+            }
+        } else if pointer?.action != .click {
+            self.status = .idle
+            self.statusLine = "All done — I'm here if you need me."
+        }
+    }
+
+    private func continueGuidedWalkthrough() {
+        guard !isCapturing else { return }
+        self.status = .thinking
+        self.statusLine = "Showing you the next step..."
+        self.logger?.log("Guided mode: continuing walkthrough (step \(guidedModeStepCount + 1))", tag: "guide")
+
+        Task {
+            do {
+                let result = try await engine.executeText("Continue showing me the next step. Look at the new screenshot to see what tab is now active, then follow the APP TOUR SCRIPT to show the next tab. Explain what this tab does in 1-2 sentences, then click the next sidebar tab.")
+                await MainActor.run {
+                    self.lastTranscript = "Guided walkthrough (step \(self.guidedModeStepCount + 1))"
+                    self.lastTranscriptTime = Date()
+
+                    if let outcome = result.1 {
+                        let responseText: String
+                        switch outcome {
+                        case .completed(let summary, _):
+                            responseText = summary
+                            self.pushEvent(title: "Guided step", body: summary, tone: .success)
+                        case .needsConfirmation(let summary):
+                            responseText = summary
+                            self.pushEvent(title: "Guided step", body: summary, tone: .warning)
+                        case .blocked(let summary):
+                            responseText = summary
+                            self.pushEvent(title: "Guided step", body: summary, tone: .failure)
+                        }
+
+                        self.lastResponseTime = Date()
+                        self.animateStreamingText(responseText)
+                        self.handlePointerAndSpeak(pointer: result.2, responseText: responseText)
+                    } else {
+                        self.guidedModeStepCount = 0
+                        self.status = .idle
+                        self.statusLine = "All done — I'm here if you need me."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.guidedModeStepCount = 0
+                    self.status = .idle
+                    self.statusLine = "Hmm, lost my way. Try asking again?"
+                    self.logger?.log("Guided mode error: \(error.localizedDescription)", tag: "guide")
                 }
             }
         }

@@ -16,31 +16,34 @@ final class PointerOverlayManager: ObservableObject {
     @Published var isVisible = false
     @Published var detectedElementScreenLocation: CGPoint?
     @Published var detectedElementLabel: String?
+    @Published var clickRippleAt: CGPoint?
 
     private var overlayWindows: [OverlayWindow] = []
     var hasShownBefore = false
 
-    /// Points the buddy cursor at a UI element using Clicky's coordinate mapping:
-    /// Scale from screenshot pixels to display points, then convert to AppKit coords.
-    func pointAt(_ coord: PointerCoordinate) {
-        guard let screen = NSScreen.main else { return }
+    /// Converts a PointerCoordinate to AppKit screen coordinates.
+    static func screenLocation(for coord: PointerCoordinate) -> CGPoint? {
+        guard let screen = NSScreen.main else { return nil }
 
         let displayWidth = coord.displayWidthPoints
         let displayHeight = coord.displayHeightPoints
 
-        // Scale from screenshot pixel coordinates to display point coordinates
         let displayLocalX = coord.x * (displayWidth / coord.screenshotWidth)
         let displayLocalY = coord.y * (displayHeight / coord.screenshotHeight)
 
-        // Convert from top-left origin (screenshot) to bottom-left origin (AppKit)
         let appKitY = displayHeight - displayLocalY
 
-        // Convert display-local coords to global screen coords
         let globalX = displayLocalX + screen.frame.origin.x
         let globalY = appKitY + screen.frame.origin.y
 
+        return CGPoint(x: globalX, y: globalY)
+    }
+
+    /// Points the buddy cursor at a UI element using Clicky's coordinate mapping.
+    func pointAt(_ coord: PointerCoordinate) {
+        guard let location = Self.screenLocation(for: coord) else { return }
         detectedElementLabel = coord.label
-        detectedElementScreenLocation = CGPoint(x: globalX, y: globalY)
+        detectedElementScreenLocation = location
     }
 
     func clearDetectedElementLocation() {
@@ -162,6 +165,11 @@ struct BuddyCursorView: View {
     @State private var navBubbleScale: CGFloat = 1.0
     @State private var navBubbleSize: CGSize = .zero
 
+    // Click ripple animation
+    @State private var clickRipplePosition: CGPoint = .zero
+    @State private var clickRippleOpacity: Double = 0.0
+    @State private var clickRippleScale: CGFloat = 0.3
+
     private let buddyColor = Color(red: 0.45, green: 0.55, blue: 0.95)
     private let pointerPhrases = ["right here!", "this one!", "over here!", "click this!", "here it is!", "found it!"]
 
@@ -207,6 +215,14 @@ struct BuddyCursorView: View {
                     )
                     .onPreferenceChange(BubbleSizeKey.self) { navBubbleSize = $0 }
             }
+
+            // Click ripple animation
+            Circle()
+                .stroke(buddyColor, lineWidth: 2)
+                .frame(width: 40, height: 40)
+                .scaleEffect(clickRippleScale)
+                .opacity(clickRippleOpacity)
+                .position(clickRipplePosition)
 
             // Triangle cursor (idle + responding)
             BuddyTriangle()
@@ -264,6 +280,23 @@ struct BuddyCursorView: View {
             guard let loc = newLoc else { return }
             guard screenFrame.contains(loc) else { return }
             startNavigatingToElement(screenLocation: loc)
+        }
+        .onChange(of: overlayManager.clickRippleAt) { _, newLoc in
+            guard let loc = newLoc else { return }
+            guard screenFrame.contains(loc) else { return }
+            let local = toSwiftUI(loc)
+            showClickRipple(at: local)
+            overlayManager.clickRippleAt = nil
+        }
+    }
+
+    private func showClickRipple(at point: CGPoint) {
+        clickRipplePosition = point
+        clickRippleScale = 0.3
+        clickRippleOpacity = 0.8
+        withAnimation(.easeOut(duration: 0.5)) {
+            clickRippleScale = 1.5
+            clickRippleOpacity = 0.0
         }
     }
 

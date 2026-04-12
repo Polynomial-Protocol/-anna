@@ -97,10 +97,16 @@ enum ConversationRole: String, Codable, Sendable {
 
 // MARK: - Pointer Coordinate
 
+enum PointerAction: Sendable {
+    case point
+    case click
+}
+
 struct PointerCoordinate: Sendable {
     let x: CGFloat
     let y: CGFloat
     let label: String?
+    let action: PointerAction
     /// The screenshot dimensions that the x,y coordinates are relative to.
     let screenshotWidth: CGFloat
     let screenshotHeight: CGFloat
@@ -125,6 +131,7 @@ struct AppSettings: Codable, Sendable {
     var knowledgeBaseEnabled: Bool = true
     var clipboardCaptureEnabled: Bool = true
     var aiProvider: String = AIProvider.anthropic.rawValue
+    var activeTourGuideID: String = ""
 
     static let defaultValue = AppSettings()
 

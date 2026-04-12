@@ -6,6 +6,7 @@ struct AnnaWorkspaceView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @ObservedObject var logger: RuntimeLogger
     let knowledgeStore: KnowledgeStore
+    let tourGuideStore: TourGuideStore
 
     @State private var selectedPage: SidebarPage = .assistant
 
@@ -57,7 +58,7 @@ struct AnnaWorkspaceView: View {
                     case .logs:
                         LogsView(logger: logger)
                     case .settings:
-                        SettingsView(viewModel: settingsViewModel)
+                        SettingsView(viewModel: settingsViewModel, tourGuideStore: tourGuideStore)
                     }
                 }
                 .transition(.opacity.animation(.easeInOut(duration: 0.2)))

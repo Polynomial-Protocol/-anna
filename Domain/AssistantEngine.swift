@@ -10,6 +10,7 @@ actor AssistantEngine {
     private let claudeCLI: ClaudeCLIService
     private let conversationStore: ConversationStore
     private let knowledgeStore: KnowledgeStore
+    private let tourGuideStore: TourGuideStore
     private let settingsProvider: () -> AppSettings
 
     private var activeMode: CaptureMode?
@@ -23,6 +24,7 @@ actor AssistantEngine {
         claudeCLI: ClaudeCLIService,
         conversationStore: ConversationStore,
         knowledgeStore: KnowledgeStore,
+        tourGuideStore: TourGuideStore,
         settingsProvider: @escaping () -> AppSettings
     ) {
         self.audioCaptureService = audioCaptureService
@@ -33,6 +35,7 @@ actor AssistantEngine {
         self.claudeCLI = claudeCLI
         self.conversationStore = conversationStore
         self.knowledgeStore = knowledgeStore
+        self.tourGuideStore = tourGuideStore
         self.settingsProvider = settingsProvider
     }
 
@@ -136,10 +139,14 @@ actor AssistantEngine {
 
         let historyContext = await buildHistoryContext()
         let knowledgeContext = await buildKnowledgeContext(for: request)
+        let tourGuideContext = await buildTourGuideContext()
 
         var fullContext = historyContext ?? ""
         if let knowledge = knowledgeContext {
             fullContext += (fullContext.isEmpty ? "" : "\n\n") + knowledge
+        }
+        if let tourGuide = tourGuideContext {
+            fullContext += (fullContext.isEmpty ? "" : "\n\n") + tourGuide
         }
         if let reason = screenshotUnavailableReason {
             fullContext += (fullContext.isEmpty ? "" : "\n\n") + reason
@@ -278,30 +285,50 @@ actor AssistantEngine {
         return "Relevant memories from the user's knowledge base:\n\(entries)"
     }
 
+    // MARK: - Tour Guide Context
+
+    private func buildTourGuideContext() async -> String? {
+        let settings = settingsProvider()
+        guard !settings.activeTourGuideID.isEmpty else { return nil }
+        guard let guide = await tourGuideStore.guideByID(settings.activeTourGuideID) else { return nil }
+        guard let content = await tourGuideStore.loadContent(for: guide) else { return nil }
+
+        return """
+        ACTIVE TOUR GUIDE — "\(guide.displayName)":
+        The following knowledge base describes the app the user wants to be guided through. Use this to understand the app's UI, features, and navigation. When the user asks for a tour, walkthrough, or demo, follow the steps described here. Use [CLICK:x,y:label] to click through safe actions and [POINT:x,y:label] for destructive ones. Guide ONE step at a time — after each CLICK, a new screenshot will be taken and you'll be asked to continue.
+
+        \(content)
+        """
+    }
+
     // MARK: - Pointer Parsing
 
     /// Parses [POINT:x,y:label] from Claude response text, attaching screenshot dimensions.
     static func parsePointerCoordinate(from text: String, screenshotWidth: CGFloat, screenshotHeight: CGFloat, displayWidthPoints: CGFloat, displayHeightPoints: CGFloat) -> PointerCoordinate? {
         guard screenshotWidth > 0, screenshotHeight > 0 else { return nil }
 
-        let pattern = #"\[POINT:(\d+)\s*,\s*(\d+)(?::([^\]]+))?\]"#
+        // Match both [POINT:x,y:label] and [CLICK:x,y:label]
+        let pattern = #"\[(POINT|CLICK):(\d+)\s*,\s*(\d+)(?::([^\]]+))?\]"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else {
             return nil
         }
 
-        guard let xRange = Range(match.range(at: 1), in: text),
-              let yRange = Range(match.range(at: 2), in: text),
+        guard let actionRange = Range(match.range(at: 1), in: text),
+              let xRange = Range(match.range(at: 2), in: text),
+              let yRange = Range(match.range(at: 3), in: text),
               let x = Double(text[xRange]),
               let y = Double(text[yRange]) else {
             return nil
         }
 
+        let action: PointerAction = text[actionRange] == "CLICK" ? .click : .point
+
         let clampedX = min(max(CGFloat(x), 0), screenshotWidth)
         let clampedY = min(max(CGFloat(y), 0), screenshotHeight)
 
         var label: String? = nil
-        if let labelRange = Range(match.range(at: 3), in: text) {
+        if let labelRange = Range(match.range(at: 4), in: text) {
             label = String(text[labelRange])
         }
 
@@ -309,6 +336,7 @@ actor AssistantEngine {
             x: clampedX,
             y: clampedY,
             label: label,
+            action: action,
             screenshotWidth: screenshotWidth,
             screenshotHeight: screenshotHeight,
             displayWidthPoints: displayWidthPoints > 0 ? displayWidthPoints : screenshotWidth,
@@ -316,10 +344,10 @@ actor AssistantEngine {
         )
     }
 
-    /// Removes [POINT:...] markers from text for display/TTS.
+    /// Removes [POINT:...] and [CLICK:...] markers from text for display/TTS.
     static func cleanResponseText(_ text: String) -> String {
         text.replacingOccurrences(
-            of: #"\s*\[POINT:[^\]]*\]\s*"#,
+            of: #"\s*\[(POINT|CLICK):[^\]]*\]\s*"#,
             with: "",
             options: .regularExpression
         ).trimmingCharacters(in: .whitespacesAndNewlines)

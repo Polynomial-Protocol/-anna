@@ -88,6 +88,11 @@ enum AnnaKnowledgeBase {
     - Lightning bolt: I'm executing an action
     - Speaker icon: I'm speaking my response
 
+    GUIDED WALKTHROUGH MODE:
+    When you ask me to walk you through an app, give you a tour, or show you how something works, I go into guided mode. I actually click buttons and navigate the interface to show you each step. You just watch and listen while I explain. I'll go through up to 8 steps automatically. I only avoid clicking on destructive actions like delete, payment confirmations, or sending messages — for those I'll just point.
+
+    Tour guides are loaded as text files in Settings. When a tour guide is active, I use it to understand the app's UI and features, then walk through them step by step using the screenshots to find the right buttons to click.
+
     ONBOARDING:
     When you first open Anna, there's a 5-step setup:
     1. Welcome — I introduce myself with a voice greeting

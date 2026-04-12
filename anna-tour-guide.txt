@@ -1,0 +1,52 @@
+APP NAME: Anna
+APP TYPE: macOS AI Voice Assistant
+WINDOW LAYOUT: Left sidebar with 5 tabs + main content area on the right
+
+SIDEBAR TABS (top to bottom):
+1. Anna — Main tab, home screen
+2. Knowledge — Memory/knowledge base browser
+3. Permissions — macOS permission status
+4. Logs — Activity/debug log
+5. Settings — Configuration options
+
+TOUR INSTRUCTIONS:
+When giving a tour, the Anna window is ALREADY OPEN and visible in the screenshot. Do NOT try to open it. Start from whatever tab is currently active and work through each tab in order. For each tab, explain what it does in 1-2 casual spoken sentences, then click the next tab in the sidebar.
+
+STEP-BY-STEP TOUR:
+
+Step 1 — ANNA TAB (home):
+Explain: This is the main screen. You can see my status at the top, keyboard shortcuts for talking to me, your recent voice commands, and my responses. The four shortcuts — Right Command for agent mode, Right Option for dictation, Control-Option-Space for smart rewrite, and Command-Shift-Space for the text bar — these are how you interact with me.
+Then: Click "Knowledge" in the left sidebar to continue.
+
+Step 2 — KNOWLEDGE TAB:
+Explain: This is my memory. Every conversation we have, things you copy to your clipboard, and notes all get saved here automatically. You can search through everything I've remembered. It grows over time so I get more helpful.
+Then: Click "Permissions" in the left sidebar to continue.
+
+Step 3 — PERMISSIONS TAB:
+Explain: This shows which macOS permissions I have. The required ones are Microphone so I can hear you, and Accessibility so I can type text into apps for you. Screen Recording is recommended because it lets me see your screen and point at things. The others are optional.
+Then: Click "Logs" in the left sidebar to continue.
+
+Step 4 — LOGS TAB:
+Explain: This is the activity log — everything happening under the hood. You can see hotkey events, voice captures, transcriptions, and action results. Super useful for debugging if something isn't working right.
+Then: Click "Settings" in the left sidebar to continue.
+
+Step 5 — SETTINGS TAB:
+Explain: And here's where you configure everything. You can pick your AI backend — Claude CLI is the most powerful, or use an API key for Claude or ChatGPT. You can toggle my voice, adjust speech speed, manage your knowledge capture settings, and import tour guides for other apps. That's the full tour!
+Then: Click "Anna" in the left sidebar to go back home. This is the final step.
+
+FEATURES TO MENTION DURING TOUR:
+- Voice commands: Hold Right Command to talk to Anna
+- Dictation: Hold Right Option to dictate text into any app
+- Smart Rewrite: Press Ctrl+Option+Space to record, press again to clean up and insert
+- Text bar: Cmd+Shift+Space to type commands
+- Screen guidance: Anna can see your screen and point at UI elements
+- Click automation: Anna can click buttons during walkthroughs
+- Knowledge base: Auto-saves conversations and clipboard items
+- Multiple AI backends: Claude CLI, Claude API, ChatGPT API, Codex CLI
+
+UI ELEMENTS IN SIDEBAR:
+- Each tab has an icon on the left and text label on the right
+- Active tab is highlighted with a lighter background
+- Sidebar background is very dark (nearly black)
+- Sidebar width is approximately 170 pixels
+- Tabs are stacked vertically with minimal spacing

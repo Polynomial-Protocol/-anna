@@ -16,6 +16,7 @@ final class AppContainer: ObservableObject {
     let textBarController: TextBarController
     let pointerOverlayManager: PointerOverlayManager
     let knowledgeStore: KnowledgeStore
+    let tourGuideStore: TourGuideStore
     let clipboardWatcher: ClipboardWatcher
     let logger: RuntimeLogger
 
@@ -72,6 +73,7 @@ final class AppContainer: ObservableObject {
         textBarController: TextBarController,
         pointerOverlayManager: PointerOverlayManager,
         knowledgeStore: KnowledgeStore,
+        tourGuideStore: TourGuideStore,
         clipboardWatcher: ClipboardWatcher,
         logger: RuntimeLogger
     ) {
@@ -90,6 +92,7 @@ final class AppContainer: ObservableObject {
         self.textBarController = textBarController
         self.pointerOverlayManager = pointerOverlayManager
         self.knowledgeStore = knowledgeStore
+        self.tourGuideStore = tourGuideStore
         self.clipboardWatcher = clipboardWatcher
         self.logger = logger
     }
@@ -108,6 +111,7 @@ final class AppContainer: ObservableObject {
         let claudeCLI = ClaudeCLIService()
         let conversationStore = ConversationStore()
         let knowledgeStore = KnowledgeStore()
+        let tourGuideStore = TourGuideStore()
         let clipboardWatcher = ClipboardWatcher(knowledgeStore: knowledgeStore)
 
         let engine = AssistantEngine(
@@ -119,6 +123,7 @@ final class AppContainer: ObservableObject {
             claudeCLI: claudeCLI,
             conversationStore: conversationStore,
             knowledgeStore: knowledgeStore,
+            tourGuideStore: tourGuideStore,
             settingsProvider: { AppSettings.load() }
         )
 
@@ -156,6 +161,7 @@ final class AppContainer: ObservableObject {
             textBarController: TextBarController(),
             pointerOverlayManager: PointerOverlayManager(),
             knowledgeStore: knowledgeStore,
+            tourGuideStore: tourGuideStore,
             clipboardWatcher: clipboardWatcher,
             logger: logger
         )

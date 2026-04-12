@@ -2,10 +2,13 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
+    var tourGuideStore: TourGuideStore?
 
     @State private var cliStatuses: [CLIStatus] = []
     @State private var apiKeyText: String = ""
     @State private var apiKeySaved = false
+    @State private var tourGuides: [TourGuide] = []
+    @State private var showingFileImporter = false
 
     var body: some View {
         ScrollView {
@@ -168,6 +171,100 @@ struct SettingsView: View {
                     }
                 }
 
+                section("Tour Guides") {
+                    Text("Import a knowledge base file (.txt or .md) to let Anna guide users through any app.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.25))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if tourGuides.isEmpty {
+                        Text("No tour guides loaded")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.35))
+                    } else {
+                        ForEach(tourGuides) { guide in
+                            HStack(spacing: 8) {
+                                let isActive = viewModel.settings.activeTourGuideID == guide.id.uuidString
+                                Button {
+                                    if isActive {
+                                        viewModel.settings.activeTourGuideID = ""
+                                    } else {
+                                        viewModel.settings.activeTourGuideID = guide.id.uuidString
+                                    }
+                                    viewModel.persist()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(isActive ? Color(hex: "69D3B0") : .white.opacity(0.3))
+                                        Text(guide.displayName)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.white.opacity(isActive ? 0.8 : 0.5))
+                                    }
+                                }
+                                .buttonStyle(.plain)
+
+                                Spacer()
+
+                                Text(guide.fileName)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.2))
+
+                                Button {
+                                    Task {
+                                        if viewModel.settings.activeTourGuideID == guide.id.uuidString {
+                                            viewModel.settings.activeTourGuideID = ""
+                                            viewModel.persist()
+                                        }
+                                        await tourGuideStore?.removeGuide(guide)
+                                        await refreshTourGuides()
+                                    }
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.white.opacity(0.25))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    Button {
+                        showingFileImporter = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle").font(.system(size: 9))
+                            Text("Import Tour Guide").font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(.white.opacity(0.45))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(.white.opacity(0.06), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .fileImporter(
+                        isPresented: $showingFileImporter,
+                        allowedContentTypes: [.plainText],
+                        allowsMultipleSelection: false
+                    ) { result in
+                        guard case .success(let urls) = result, let url = urls.first else { return }
+                        let accessing = url.startAccessingSecurityScopedResource()
+                        Task {
+                            do {
+                                let guide = try await tourGuideStore?.importFile(at: url)
+                                if let guide {
+                                    viewModel.settings.activeTourGuideID = guide.id.uuidString
+                                    viewModel.persist()
+                                }
+                                await refreshTourGuides()
+                            } catch {
+                                print("Tour guide import failed: \(error)")
+                            }
+                            if accessing { url.stopAccessingSecurityScopedResource() }
+                        }
+                    }
+                }
+
                 section("Shortcuts") {
                     shortcutRow("Right \u{2318}", "Agent command")
                     shortcutRow("Right \u{2325}", "Dictation")
@@ -180,6 +277,7 @@ struct SettingsView: View {
             cliStatuses = CLIStatus.detectAll()
             let provider = AIProvider(rawValue: viewModel.settings.aiProvider) ?? .anthropic
             loadAPIKey(for: provider)
+            Task { await refreshTourGuides() }
         }
     }
 
@@ -213,6 +311,10 @@ struct SettingsView: View {
         .toggleStyle(.switch)
         .controlSize(.small)
         .tint(.white.opacity(0.35))
+    }
+
+    private func refreshTourGuides() async {
+        tourGuides = await tourGuideStore?.allGuides() ?? []
     }
 
     private func loadAPIKey(for provider: AIProvider) {
