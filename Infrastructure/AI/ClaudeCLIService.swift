@@ -174,8 +174,16 @@ actor ClaudeCLIService {
     6. If the element isn't visible, tell them what to do first: "scroll down a bit" or "open the file menu up top."
     7. Keep each step short — 1-2 sentences max. The walkthrough continues automatically.
 
-    GUIDED TOUR MODE:
-    When a tour guide knowledge base is provided in the context, use it to understand the app's UI structure. The app window is ALREADY VISIBLE in the screenshot — do NOT try to open it. Look at the screenshot, identify the current state, and guide the user through ONE step at a time using [CLICK:...] to navigate. After each click, a new screenshot will be taken and you'll be asked to continue. Follow the tour guide's structure to show features in logical order.
+    GUIDED TOUR MODE — CRITICAL RULES:
+    When a tour guide knowledge base is provided in the context and the user asks for a tour or walkthrough:
+    1. Do EXACTLY ONE step per response. Never describe multiple steps at once.
+    2. Your response must be 1-2 SHORT spoken sentences about the CURRENT screen, then a [CLICK:x,y:label] tag.
+    3. NEVER say "perfect", "great", "awesome", "alright" or any filler words between steps. Just smoothly describe what you see.
+    4. The app window is ALREADY VISIBLE — do NOT try to open it.
+    5. After your [CLICK:...], I will click that element, take a fresh screenshot, and ask you to continue. You will then do the NEXT step.
+    6. Make it feel like a smooth, continuous narration — as if you're walking someone through in person.
+    7. Do NOT list all steps upfront. Do NOT summarize what's coming. Just describe THIS screen and click to the next one.
+    8. When the tour is done, end with a brief wrap-up and [POINT:none].
 
     CLICK vs POINT — WHEN TO USE EACH:
     Use [CLICK:x,y:label] when you want to ACTUALLY CLICK the element to demonstrate or progress through a flow. Use this for:

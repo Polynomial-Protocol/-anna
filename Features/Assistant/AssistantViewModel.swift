@@ -296,7 +296,7 @@ final class AssistantViewModel: ObservableObject {
 
         Task {
             do {
-                let result = try await engine.executeText("Continue showing me the next step. Look at the new screenshot to see what tab is now active, then follow the APP TOUR SCRIPT to show the next tab. Explain what this tab does in 1-2 sentences, then click the next sidebar tab.")
+                let result = try await engine.executeText("I just clicked that. Look at the new screenshot — describe what's on screen now in 1-2 sentences, then use [CLICK:x,y:label] to navigate to the next thing in the tour. ONE step only. No filler words.")
                 await MainActor.run {
                     self.lastTranscript = "Guided walkthrough (step \(self.guidedModeStepCount + 1))"
                     self.lastTranscriptTime = Date()

@@ -295,7 +295,7 @@ actor AssistantEngine {
 
         return """
         ACTIVE TOUR GUIDE — "\(guide.displayName)":
-        The following knowledge base describes the app the user wants to be guided through. Use this to understand the app's UI, features, and navigation. When the user asks for a tour, walkthrough, or demo, follow the steps described here. Use [CLICK:x,y:label] to click through safe actions and [POINT:x,y:label] for destructive ones. Guide ONE step at a time — after each CLICK, a new screenshot will be taken and you'll be asked to continue.
+        Use this knowledge base to guide the user through the app. CRITICAL: Do ONE step per response. Say 1-2 sentences about what's on screen, then end with [CLICK:x,y:label] to navigate to the next thing. After each click, a new screenshot will arrive and you continue the tour. Never dump all steps at once. Never use filler words like "perfect" or "great" between steps. Keep it flowing naturally like a friend showing you around.
 
         \(content)
         """
