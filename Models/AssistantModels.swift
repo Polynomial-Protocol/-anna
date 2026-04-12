@@ -3,6 +3,7 @@ import Foundation
 enum CaptureMode: String, Sendable {
     case assistantCommand
     case dictation
+    case rewriteDictation   // Toggle-based: transcribe → rewrite → insert
 }
 
 struct CapturedUtterance: Sendable {
@@ -103,6 +104,9 @@ struct PointerCoordinate: Sendable {
     /// The screenshot dimensions that the x,y coordinates are relative to.
     let screenshotWidth: CGFloat
     let screenshotHeight: CGFloat
+    /// The display dimensions in AppKit points — used for coordinate scaling.
+    let displayWidthPoints: CGFloat
+    let displayHeightPoints: CGFloat
 }
 
 // MARK: - Settings Persistence

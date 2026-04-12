@@ -64,6 +64,19 @@ actor AssistantEngine {
                 nil
             )
 
+        case .rewriteDictation:
+            let rawText = transcript.text
+            if rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return (rawText, .completed(summary: "Nothing to rewrite.", openedURL: nil), nil)
+            }
+            let rewritten = try await rewriteText(rawText)
+            try await textInsertionService.insertText(rewritten)
+            return (
+                rawText,
+                .completed(summary: "Rewrote and inserted your text.", openedURL: nil),
+                nil
+            )
+
         case .assistantCommand:
             let tier = IntentRouter.route(transcript.text)
             switch tier {
@@ -93,10 +106,12 @@ actor AssistantEngine {
     // MARK: - Agent Execution (shared by voice and text paths)
 
     private func executeAgent(request: String, transcript: String) async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
-        // Capture screenshot and its actual pixel dimensions
+        // Capture screenshot — track both pixel dimensions and display point dimensions
         var screenshotPath: String? = nil
         var screenshotPixelWidth: Int = 0
         var screenshotPixelHeight: Int = 0
+        var displayWidthPoints: Int = 0
+        var displayHeightPoints: Int = 0
         var screenshotUnavailableReason: String? = nil
 
         do {
@@ -104,6 +119,8 @@ actor AssistantEngine {
             screenshotPath = capture.url.path
             screenshotPixelWidth = capture.widthPixels
             screenshotPixelHeight = capture.heightPixels
+            displayWidthPoints = capture.displayWidthPoints
+            displayHeightPoints = capture.displayHeightPoints
         } catch {
             if !CGPreflightScreenCaptureAccess() {
                 CGRequestScreenCaptureAccess()
@@ -139,7 +156,9 @@ actor AssistantEngine {
         let pointer = Self.parsePointerCoordinate(
             from: result.text,
             screenshotWidth: CGFloat(screenshotPixelWidth),
-            screenshotHeight: CGFloat(screenshotPixelHeight)
+            screenshotHeight: CGFloat(screenshotPixelHeight),
+            displayWidthPoints: CGFloat(displayWidthPoints),
+            displayHeightPoints: CGFloat(displayHeightPoints)
         )
         let cleanText = Self.cleanResponseText(result.text)
 
@@ -200,6 +219,36 @@ actor AssistantEngine {
         }
     }
 
+    // MARK: - Rewrite Text
+
+    /// Sends raw transcribed text to the AI backend for rewriting/polishing,
+    /// then returns the cleaned-up version for insertion.
+    private func rewriteText(_ rawText: String) async throws -> String {
+        let rewritePrompt = """
+        Rewrite the following spoken text into clean, well-written text. \
+        Fix grammar, punctuation, and awkward phrasing. Keep the meaning and tone intact. \
+        Do NOT add anything new or change the intent. \
+        Return ONLY the rewritten text, nothing else — no quotes, no explanation, no preamble.
+
+        Spoken text: \(rawText)
+        """
+
+        let result = try await executeWithBackend(
+            request: rewritePrompt,
+            screenshotPath: nil,
+            screenshotWidth: 0,
+            screenshotHeight: 0,
+            conversationContext: nil
+        )
+
+        let cleaned = result.text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"^\"|\"$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return cleaned.isEmpty ? rawText : cleaned
+    }
+
     func cancelCapture() async {
         activeMode = nil
         await audioCaptureService.cancelCapture()
@@ -232,7 +281,7 @@ actor AssistantEngine {
     // MARK: - Pointer Parsing
 
     /// Parses [POINT:x,y:label] from Claude response text, attaching screenshot dimensions.
-    static func parsePointerCoordinate(from text: String, screenshotWidth: CGFloat, screenshotHeight: CGFloat) -> PointerCoordinate? {
+    static func parsePointerCoordinate(from text: String, screenshotWidth: CGFloat, screenshotHeight: CGFloat, displayWidthPoints: CGFloat, displayHeightPoints: CGFloat) -> PointerCoordinate? {
         guard screenshotWidth > 0, screenshotHeight > 0 else { return nil }
 
         let pattern = #"\[POINT:(\d+)\s*,\s*(\d+)(?::([^\]]+))?\]"#
@@ -248,7 +297,6 @@ actor AssistantEngine {
             return nil
         }
 
-        // Clamp to valid range
         let clampedX = min(max(CGFloat(x), 0), screenshotWidth)
         let clampedY = min(max(CGFloat(y), 0), screenshotHeight)
 
@@ -262,7 +310,9 @@ actor AssistantEngine {
             y: clampedY,
             label: label,
             screenshotWidth: screenshotWidth,
-            screenshotHeight: screenshotHeight
+            screenshotHeight: screenshotHeight,
+            displayWidthPoints: displayWidthPoints > 0 ? displayWidthPoints : screenshotWidth,
+            displayHeightPoints: displayHeightPoints > 0 ? displayHeightPoints : screenshotHeight
         )
     }
 

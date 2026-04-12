@@ -3,19 +3,17 @@ import ScreenCaptureKit
 import AppKit
 import CoreGraphics
 
-/// Result of a screen capture, including the image data and its pixel dimensions.
 struct ScreenCaptureResult: Sendable {
     let base64PNG: String
     let widthPixels: Int
     let heightPixels: Int
+    let displayWidthPoints: Int
+    let displayHeightPoints: Int
 }
 
-/// Captures the current screen content using ScreenCaptureKit.
-/// Used to give Claude visual context about what the user is looking at.
 @MainActor
 final class ScreenCaptureService {
 
-    /// Captures the main display and returns base64 PNG with actual pixel dimensions.
     func captureScreen() async throws -> ScreenCaptureResult {
         guard CGPreflightScreenCaptureAccess() else {
             throw AnnaError.screenCaptureFailed("Screen Recording permission not granted.")
@@ -27,10 +25,31 @@ final class ScreenCaptureService {
             throw AnnaError.screenCaptureFailed("No display found.")
         }
 
-        let filter = SCContentFilter(display: mainDisplay, excludingWindows: [])
+        guard let screen = NSScreen.main else {
+            throw AnnaError.screenCaptureFailed("No main screen found.")
+        }
+
+        let displayWidthPoints = Int(screen.frame.width)
+        let displayHeightPoints = Int(screen.frame.height)
+
+        // Exclude our own windows so Claude sees only the user's content
+        let ownBundleID = Bundle.main.bundleIdentifier
+        let ownWindows = content.windows.filter { $0.owningApplication?.bundleIdentifier == ownBundleID }
+
+        let filter = SCContentFilter(display: mainDisplay, excludingWindows: ownWindows)
         let config = SCStreamConfiguration()
-        config.width = min(Int(mainDisplay.width), 1920)
-        config.height = min(Int(mainDisplay.height), 1080)
+
+        // Match Clicky's approach: 1280px max, preserve aspect ratio.
+        // Smaller screenshots give Claude better coordinate accuracy.
+        let maxDimension = 1280
+        let aspectRatio = CGFloat(mainDisplay.width) / CGFloat(mainDisplay.height)
+        if mainDisplay.width >= mainDisplay.height {
+            config.width = maxDimension
+            config.height = Int(CGFloat(maxDimension) / aspectRatio)
+        } else {
+            config.height = maxDimension
+            config.width = Int(CGFloat(maxDimension) * aspectRatio)
+        }
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = false
 
@@ -39,39 +58,37 @@ final class ScreenCaptureService {
             configuration: config
         )
 
-        // Use the actual CGImage pixel dimensions — these are ground truth
         let actualWidth = image.width
         let actualHeight = image.height
 
-        let nsImage = NSImage(cgImage: image, size: NSSize(width: actualWidth, height: actualHeight))
-
-        guard let tiffData = nsImage.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData),
-              let pngData = bitmap.representation(using: .png, properties: [.compressionFactor: 0.8]) else {
-            throw AnnaError.screenCaptureFailed("Could not encode screenshot to PNG.")
+        // Use JPEG for smaller payload — matches Clicky's approach
+        guard let jpegData = NSBitmapImageRep(cgImage: image)
+                .representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else {
+            throw AnnaError.screenCaptureFailed("Could not encode screenshot to JPEG.")
         }
 
         return ScreenCaptureResult(
-            base64PNG: pngData.base64EncodedString(),
+            base64PNG: jpegData.base64EncodedString(),
             widthPixels: actualWidth,
-            heightPixels: actualHeight
+            heightPixels: actualHeight,
+            displayWidthPoints: displayWidthPoints,
+            displayHeightPoints: displayHeightPoints
         )
     }
 
-    /// Captures and saves to a temp file, returns the file URL and pixel dimensions.
-    func captureToFile() async throws -> (url: URL, widthPixels: Int, heightPixels: Int) {
+    func captureToFile() async throws -> (url: URL, widthPixels: Int, heightPixels: Int, displayWidthPoints: Int, displayHeightPoints: Int) {
         let result = try await captureScreen()
         guard let data = Data(base64Encoded: result.base64PNG) else {
             throw AnnaError.screenCaptureFailed("Invalid base64 data.")
         }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("anna-screenshot-\(UUID().uuidString)")
-            .appendingPathExtension("png")
+            .appendingPathExtension("jpg")
         try data.write(to: url)
-        return (url: url, widthPixels: result.widthPixels, heightPixels: result.heightPixels)
+        return (url: url, widthPixels: result.widthPixels, heightPixels: result.heightPixels,
+                displayWidthPoints: result.displayWidthPoints, displayHeightPoints: result.displayHeightPoints)
     }
 
-    /// Returns the screen dimensions of the main display.
     func mainScreenSize() -> CGSize {
         NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
     }

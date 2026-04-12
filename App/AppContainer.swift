@@ -233,6 +233,57 @@ final class AppContainer: ObservableObject {
             return event
         }
         logger.log("Global hotkey registered — ⌘⇧Space for text bar", tag: "hotkey")
+
+        // Global hotkey: Ctrl+Option+Space → toggle rewrite dictation
+        // First press starts recording, second press stops → rewrite → insert
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return }
+            if event.keyCode == 49 &&
+               event.modifierFlags.contains(.control) &&
+               event.modifierFlags.contains(.option) &&
+               !event.modifierFlags.contains(.command) &&
+               !event.modifierFlags.contains(.shift) {
+                DispatchQueue.main.async {
+                    self.toggleRewriteDictation()
+                }
+            }
+        }
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == 49 &&
+               event.modifierFlags.contains(.control) &&
+               event.modifierFlags.contains(.option) &&
+               !event.modifierFlags.contains(.command) &&
+               !event.modifierFlags.contains(.shift) {
+                DispatchQueue.main.async {
+                    self.toggleRewriteDictation()
+                }
+                return nil
+            }
+            return event
+        }
+        logger.log("Global hotkey registered — ⌃⌥Space for rewrite dictation", tag: "hotkey")
+    }
+
+    /// Toggle rewrite dictation: first press starts recording, second press stops and rewrites.
+    private func toggleRewriteDictation() {
+        if assistantViewModel.isCapturing && assistantViewModel.activeMode == .rewriteDictation {
+            // Second press — stop recording, rewrite, and insert
+            logger.log("⌃⌥Space — stopping rewrite dictation", tag: "hotkey")
+            assistantViewModel.endCapture()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+                if !self.assistantViewModel.isCapturing {
+                    self.responseBubbleController.hide()
+                    self.pointerOverlayManager.fadeOutAndHide()
+                }
+            }
+        } else if !assistantViewModel.isCapturing {
+            // First press — start recording, show mic indicator near cursor
+            logger.log("⌃⌥Space — starting rewrite dictation", tag: "hotkey")
+            assistantViewModel.beginCapture(mode: .rewriteDictation)
+            responseBubbleController.show(viewModel: assistantViewModel)
+            pointerOverlayManager.showOverlay(viewModel: assistantViewModel)
+        }
     }
 
     deinit {

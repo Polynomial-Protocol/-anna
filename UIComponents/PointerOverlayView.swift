@@ -18,45 +18,29 @@ final class PointerOverlayManager: ObservableObject {
     @Published var detectedElementLabel: String?
 
     private var overlayWindows: [OverlayWindow] = []
-    private let elementDetector = ElementLocationDetector()
     var hasShownBefore = false
 
-    /// Points the buddy cursor at a UI element.
-    ///
-    /// Uses a two-step approach (like Clicky's ElementLocationDetector):
-    /// 1. Try the Accessibility API to find the actual element at Claude's approximate
-    ///    coordinates and snap to its exact center — pixel-perfect.
-    /// 2. If AX fails (no permission, no element found), fall back to the raw
-    ///    coordinate mapping from screenshot pixels to display points.
+    /// Points the buddy cursor at a UI element using Clicky's coordinate mapping:
+    /// Scale from screenshot pixels to display points, then convert to AppKit coords.
     func pointAt(_ coord: PointerCoordinate) {
-        // Step 1: Try Accessibility-based element detection for pixel-perfect accuracy
-        if let detected = elementDetector.detectElement(
-            screenshotX: coord.x,
-            screenshotY: coord.y,
-            screenshotWidth: coord.screenshotWidth,
-            screenshotHeight: coord.screenshotHeight,
-            label: coord.label
-        ) {
-            detectedElementLabel = detected.label ?? coord.label
-            detectedElementScreenLocation = detected.screenLocation
-            return
-        }
-
-        // Step 2: Fallback — map screenshot pixels to display points directly
         guard let screen = NSScreen.main else { return }
 
-        let scaleX = screen.frame.width / coord.screenshotWidth
-        let scaleY = screen.frame.height / coord.screenshotHeight
+        let displayWidth = coord.displayWidthPoints
+        let displayHeight = coord.displayHeightPoints
 
-        let displayX = coord.x * scaleX
-        let displayY = coord.y * scaleY
+        // Scale from screenshot pixel coordinates to display point coordinates
+        let displayLocalX = coord.x * (displayWidth / coord.screenshotWidth)
+        let displayLocalY = coord.y * (displayHeight / coord.screenshotHeight)
 
-        // Convert from top-left origin (screenshot) to AppKit bottom-left origin
-        let appKitX = screen.frame.origin.x + displayX
-        let appKitY = screen.frame.origin.y + (screen.frame.height - displayY)
+        // Convert from top-left origin (screenshot) to bottom-left origin (AppKit)
+        let appKitY = displayHeight - displayLocalY
+
+        // Convert display-local coords to global screen coords
+        let globalX = displayLocalX + screen.frame.origin.x
+        let globalY = appKitY + screen.frame.origin.y
 
         detectedElementLabel = coord.label
-        detectedElementScreenLocation = CGPoint(x: appKitX, y: appKitY)
+        detectedElementScreenLocation = CGPoint(x: globalX, y: globalY)
     }
 
     func clearDetectedElementLocation() {
@@ -245,10 +229,17 @@ struct BuddyCursorView: View {
                     value: triangleRotation
                 )
 
-            // Waveform (listening)
+            // Waveform (listening — non-rewrite modes)
             BuddyWaveformView()
-                .opacity(buddyVisible && viewModel.status == .listening ? cursorOpacity : 0)
+                .opacity(buddyVisible && viewModel.status == .listening && viewModel.activeMode != .rewriteDictation ? cursorOpacity : 0)
                 .position(cursorPosition)
+                .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+                .animation(.easeIn(duration: 0.15), value: viewModel.status)
+
+            // Microphone (rewrite dictation listening)
+            BuddyMicrophoneView()
+                .opacity(buddyVisible && viewModel.status == .listening && viewModel.activeMode == .rewriteDictation ? cursorOpacity : 0)
+                .position(x: cursorPosition.x, y: cursorPosition.y)
                 .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                 .animation(.easeIn(duration: 0.15), value: viewModel.status)
 
@@ -477,6 +468,47 @@ private struct BuddyWaveformView: View {
         let phase = CGFloat(date.timeIntervalSinceReferenceDate * 3.6) + CGFloat(index) * 0.35
         let pulse = (sin(phase) + 1) / 2 * 3.0
         return 3 + barProfile[index] * 6 + pulse
+    }
+}
+
+// MARK: - Microphone (rewrite dictation listening)
+
+private struct BuddyMicrophoneView: View {
+    @State private var pulse: CGFloat = 1.0
+    @State private var ringScale: CGFloat = 1.0
+    @State private var ringOpacity: Double = 0.6
+
+    private let accent = Color(red: 0.45, green: 0.55, blue: 0.95)
+
+    var body: some View {
+        ZStack {
+            // Expanding ring (ripple effect)
+            Circle()
+                .stroke(accent.opacity(ringOpacity), lineWidth: 1.5)
+                .frame(width: 22, height: 22)
+                .scaleEffect(ringScale)
+
+            // Solid filled circle backing the mic icon
+            Circle()
+                .fill(accent)
+                .frame(width: 22, height: 22)
+                .shadow(color: accent.opacity(0.7), radius: 8 + (pulse - 1.0) * 10)
+
+            // Microphone SF Symbol
+            Image(systemName: "mic.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.white)
+        }
+        .scaleEffect(pulse)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                pulse = 1.12
+            }
+            withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
+                ringScale = 1.8
+                ringOpacity = 0.0
+            }
+        }
     }
 }
 

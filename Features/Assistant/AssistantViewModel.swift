@@ -53,7 +53,11 @@ final class AssistantViewModel: ObservableObject {
         pendingEnd = false
         status = .listening
         streamingText = ""
-        statusLine = mode == .assistantCommand ? "I'm listening..." : "Go ahead, I'll type it out..."
+        switch mode {
+        case .assistantCommand: statusLine = "I'm listening..."
+        case .dictation: statusLine = "Go ahead, I'll type it out..."
+        case .rewriteDictation: statusLine = "Speak freely — I'll clean it up after..."
+        }
         logger?.log("Begin capture — mode: \(mode.rawValue)", tag: "capture")
 
         Task {
