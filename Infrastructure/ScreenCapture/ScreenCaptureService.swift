@@ -32,11 +32,15 @@ final class ScreenCaptureService {
         let displayWidthPoints = Int(screen.frame.width)
         let displayHeightPoints = Int(screen.frame.height)
 
-        // Exclude our own windows so Claude sees only the user's content
+        // Exclude only overlay windows (buddy cursor, response bubble) but keep the
+        // main Anna window visible so Claude can see and click its UI during tours.
         let ownBundleID = Bundle.main.bundleIdentifier
-        let ownWindows = content.windows.filter { $0.owningApplication?.bundleIdentifier == ownBundleID }
+        let overlayWindows = content.windows.filter { window in
+            guard window.owningApplication?.bundleIdentifier == ownBundleID else { return false }
+            return window.title?.isEmpty ?? true || window.frame.width >= CGFloat(mainDisplay.width)
+        }
 
-        let filter = SCContentFilter(display: mainDisplay, excludingWindows: ownWindows)
+        let filter = SCContentFilter(display: mainDisplay, excludingWindows: overlayWindows)
         let config = SCStreamConfiguration()
 
         // Match Clicky's approach: 1280px max, preserve aspect ratio.
