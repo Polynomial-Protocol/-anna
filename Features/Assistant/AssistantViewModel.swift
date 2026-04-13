@@ -106,7 +106,9 @@ final class AssistantViewModel: ObservableObject {
                     self.recorderReady = false
                     self.lastTranscript = result.0
                     self.lastTranscriptTime = Date()
-                    self.logger?.log("Transcription: \"\(result.0)\"", tag: "voice")
+                    self.isInTourMode = self.detectTourMode(from: result.0)
+                    self.guidedModeStepCount = 0
+                    self.logger?.log("Transcription: \"\(result.0)\" (tour: \(self.isInTourMode))", tag: "voice")
 
                     if let outcome = result.1 {
                         let responseText: String
@@ -183,7 +185,12 @@ final class AssistantViewModel: ObservableObject {
                     self.isCapturing = false
                     self.lastTranscript = result.0
                     self.lastTranscriptTime = Date()
-                    self.logger?.log("Text result: \"\(result.0)\"", tag: "text")
+                    // Only set tour mode from original user input, not continuation prompts
+                    if !self.isInTourMode {
+                        self.isInTourMode = self.detectTourMode(from: trimmed)
+                        self.guidedModeStepCount = 0
+                    }
+                    self.logger?.log("Text result: \"\(result.0)\" (tour: \(self.isInTourMode))", tag: "text")
 
                     if let outcome = result.1 {
                         let responseText: String
@@ -226,6 +233,19 @@ final class AssistantViewModel: ObservableObject {
 
     private var guidedModeStepCount = 0
     private let maxGuidedSteps = 8
+    private var isInTourMode = false
+
+    private static let tourKeywords = [
+        "tour", "walk me through", "walkthrough", "walk through",
+        "show me everything", "show me around", "demo", "guide me",
+        "give me a tour", "all the tabs", "all the features",
+        "show me all", "explain the app", "explain anna"
+    ]
+
+    private func detectTourMode(from text: String) -> Bool {
+        let lower = text.lowercased()
+        return Self.tourKeywords.contains { lower.contains($0) }
+    }
 
     private func handlePointerAndSpeak(pointer: PointerCoordinate?, responseText: String) {
         let isClick = pointer?.action == .click
@@ -263,20 +283,28 @@ final class AssistantViewModel: ObservableObject {
                         self.pointerOverlayManager.hide()
                     }
 
-                    // Step 5: Wait for UI to settle, then continue tour
-                    self.guidedModeStepCount += 1
-                    if self.guidedModeStepCount < self.maxGuidedSteps {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                            self.continueGuidedWalkthrough()
+                    // Step 5: Only auto-continue if in tour mode
+                    if self.isInTourMode {
+                        self.guidedModeStepCount += 1
+                        if self.guidedModeStepCount < self.maxGuidedSteps {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                self.continueGuidedWalkthrough()
+                            }
+                        } else {
+                            self.guidedModeStepCount = 0
+                            self.isInTourMode = false
+                            self.status = .idle
+                            self.statusLine = "All done — I'm here if you need me."
                         }
                     } else {
-                        self.guidedModeStepCount = 0
+                        // One-off click — just finish
                         self.status = .idle
                         self.statusLine = "All done — I'm here if you need me."
                     }
                 } else {
-                    // No click — just finish
+                    // No click — just finish (also ends tour mode)
                     self.guidedModeStepCount = 0
+                    self.isInTourMode = false
                     self.pointerOverlayManager.hide()
                     self.status = .idle
                     self.statusLine = "All done — I'm here if you need me."
