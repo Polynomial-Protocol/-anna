@@ -25,9 +25,11 @@ final class AssistantViewModel: ObservableObject {
     private let settingsProvider: () -> AppSettings
     private let settingsUpdater: (AppSettings) -> Void
     var logger: RuntimeLogger?
+    private(set) lazy var tourAnalytics = TourAnalytics(logger: logger)
 
     private var recorderReady = false
     private var pendingEnd = false
+    private var tourStartTime: Date?
 
     init(
         engine: AssistantEngine,
@@ -106,8 +108,14 @@ final class AssistantViewModel: ObservableObject {
                     self.recorderReady = false
                     self.lastTranscript = result.0
                     self.lastTranscriptTime = Date()
+                    let wasTourMode = self.isInTourMode
                     self.isInTourMode = self.detectTourMode(from: result.0)
                     self.guidedModeStepCount = 0
+                    if self.isInTourMode && !wasTourMode {
+                        self.tourStartTime = Date()
+                        let settings = self.settingsProvider()
+                        self.tourAnalytics.tourStarted(tourGuideID: settings.activeTourGuideID, tourName: "Voice tour")
+                    }
                     self.logger?.log("Transcription: \"\(result.0)\" (tour: \(self.isInTourMode))", tag: "voice")
 
                     if let outcome = result.1 {
@@ -288,6 +296,7 @@ final class AssistantViewModel: ObservableObject {
                     self.pointerOverlayManager.clickRippleAt = loc
                     ClickSimulator.click(at: loc)
                     self.logger?.log("Guided click at (\(Int(loc.x)), \(Int(loc.y))): \(pointer?.label ?? "element")", tag: "guide")
+                    self.tourAnalytics.stepClicked(stepIndex: self.guidedModeStepCount, clickTarget: pointer?.label, durationMs: 0)
 
                     if self.isInTourMode {
                         // Tour mode: keep overlay, continue after delay
@@ -342,8 +351,11 @@ final class AssistantViewModel: ObservableObject {
     }
 
     private func finishTour() {
+        let totalMs = Int((Date().timeIntervalSince(tourStartTime ?? Date())) * 1000)
+        tourAnalytics.tourCompleted(totalSteps: guidedModeStepCount, totalDurationMs: totalMs)
         self.guidedModeStepCount = 0
         self.isInTourMode = false
+        self.tourStartTime = nil
         self.pointerOverlayManager.hide()
         self.status = .idle
         self.statusLine = "All done — I'm here if you need me."
@@ -363,7 +375,7 @@ final class AssistantViewModel: ObservableObject {
 
         Task {
             do {
-                let result = try await engine.executeInternalText("The click happened and the UI updated. Look at the screenshot carefully. Describe what you SEE on this screen in 1-2 short sentences, then click the next element in the tour using [CLICK:x,y:label]. Guide through whatever app is currently visible — do NOT try to switch apps. If the tour is complete, say a brief wrap-up and use [POINT:none].")
+                let result = try await engine.executeInternalText("The click happened. Look at the NEW screenshot carefully. If the screen looks the same as before (the click didn't work), say so briefly and try clicking a slightly different spot. Otherwise, describe what you SEE in 1-2 short sentences, then click the next element using [CLICK:x,y:label]. Guide through whatever app is visible — do NOT switch apps. If the tour is done, wrap up briefly and use [POINT:none].")
                 await MainActor.run {
                     self.lastTranscript = "Guided walkthrough (step \(self.guidedModeStepCount + 1))"
                     self.lastTranscriptTime = Date()
@@ -427,6 +439,8 @@ final class AssistantViewModel: ObservableObject {
 
     func stopTour() {
         ttsService.stop()
+        let totalMs = Int((Date().timeIntervalSince(tourStartTime ?? Date())) * 1000)
+        tourAnalytics.tourAbandoned(stepIndex: guidedModeStepCount, reason: "user_stopped", totalDurationMs: totalMs)
         finishTour()
         logger?.log("Tour stopped by user", tag: "guide")
     }

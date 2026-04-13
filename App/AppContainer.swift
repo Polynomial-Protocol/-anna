@@ -114,6 +114,12 @@ final class AppContainer: ObservableObject {
         let tourGuideStore = TourGuideStore()
         let clipboardWatcher = ClipboardWatcher(knowledgeStore: knowledgeStore)
 
+        // Background: consolidate memory (dedupe, archive stale, backfill embeddings)
+        Task.detached(priority: .background) {
+            try? await Task.sleep(nanoseconds: 5_000_000_000) // Wait 5s after launch
+            await knowledgeStore.consolidate()
+        }
+
         let engine = AssistantEngine(
             audioCaptureService: audioCaptureService,
             voiceService: voiceService,

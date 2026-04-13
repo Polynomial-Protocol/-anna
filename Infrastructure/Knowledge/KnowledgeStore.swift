@@ -114,7 +114,14 @@ actor KnowledgeStore {
         for e in vectorResults + ftsResults { entryMap[e.id] = e }
 
         let sorted = scores.sorted { $0.value > $1.value }.prefix(limit)
-        return sorted.compactMap { entryMap[$0.key] }
+        let results = sorted.compactMap { entryMap[$0.key] }
+
+        // Track access for retrieved entries
+        for entry in results {
+            trackAccess(entryID: entry.id)
+        }
+
+        return results
     }
 
     // MARK: - Vector Search
@@ -284,6 +291,99 @@ actor KnowledgeStore {
             cache.append((id: entryID, embedding: Array(buffer)))
         }
         embeddingCache = cache
+    }
+
+    // MARK: - Memory Consolidation (Phase 2)
+
+    /// Increment access count when an entry is retrieved for context injection.
+    func trackAccess(entryID: Int64) {
+        execute("UPDATE entries SET access_count = access_count + 1 WHERE id = \(entryID)")
+    }
+
+    /// Update an entry's memory type (e.g., user pins it as permanent).
+    func setMemoryType(entryID: Int64, type: MemoryType) {
+        let sql = "UPDATE entries SET memory_type = ? WHERE id = ?"
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (type.rawValue as NSString).utf8String, -1, nil)
+        sqlite3_bind_int64(stmt, 2, entryID)
+        sqlite3_step(stmt)
+    }
+
+    /// Find duplicate entries using vector similarity > 0.92.
+    func findDuplicates(threshold: Float = 0.92) -> [(Int64, Int64)] {
+        var dupes: [(Int64, Int64)] = []
+        for i in 0..<embeddingCache.count {
+            for j in (i + 1)..<embeddingCache.count {
+                let sim = cosineSim(embeddingCache[i].embedding, embeddingCache[j].embedding)
+                if sim > threshold {
+                    dupes.append((embeddingCache[i].id, embeddingCache[j].id))
+                }
+            }
+        }
+        return dupes
+    }
+
+    /// Archive stale episodic entries older than their decay period.
+    /// Returns the number of entries archived.
+    @discardableResult
+    func archiveStaleEntries() -> Int {
+        let now = Date().timeIntervalSince1970
+        var archived = 0
+
+        for memType in MemoryType.allCases {
+            guard let decayDays = memType.decayDays else { continue }
+            let cutoff = now - Double(decayDays * 86400)
+            let sql = """
+                DELETE FROM entries
+                WHERE memory_type = ? AND created_at < ? AND access_count < 3
+            """
+            guard let stmt = prepare(sql) else { continue }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (memType.rawValue as NSString).utf8String, -1, nil)
+            sqlite3_bind_double(stmt, 2, cutoff)
+            sqlite3_step(stmt)
+            archived += Int(sqlite3_changes(db))
+        }
+
+        return archived
+    }
+
+    /// Consolidate: deduplicate + archive stale + backfill embeddings.
+    /// Call periodically (e.g., on app launch or after 100+ new entries).
+    func consolidate() async {
+        // 1. Backfill any missing embeddings
+        await backfillEmbeddings(batchSize: 100)
+
+        // 2. Archive stale entries
+        let archived = archiveStaleEntries()
+        if archived > 0 {
+            // Reload cache after deletion
+            loadEmbeddingCache()
+        }
+
+        // 3. Deduplicate (merge newer into older, delete newer)
+        let dupes = findDuplicates()
+        for (keepID, removeID) in dupes {
+            deleteEntry(id: removeID)
+        }
+        if !dupes.isEmpty {
+            loadEmbeddingCache()
+        }
+    }
+
+    /// Entries that may be stale and need user confirmation.
+    func stalenessCheck(olderThanDays: Int = 540) -> [KnowledgeEntry] {
+        let cutoff = Date().timeIntervalSince1970 - Double(olderThanDays * 86400)
+        let sql = """
+            SELECT id, title, content, source_type, created_at FROM entries
+            WHERE memory_type = 'semantic' AND created_at < ? AND access_count > 0
+            ORDER BY created_at ASC LIMIT 10
+        """
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, cutoff)
+        return readEntries(from: stmt)
     }
 
     /// Batch-embed existing entries that don't have embeddings yet.
