@@ -76,11 +76,11 @@ enum AnnaStatus: String, CaseIterable, Sendable {
 
     var color: Color {
         switch self {
-        case .idle: return .white.opacity(0.3)
-        case .listening: return .white
-        case .thinking: return .white.opacity(0.8)
-        case .acting: return .white.opacity(0.8)
-        case .speaking: return .white.opacity(0.7)
+        case .idle: return Color(red: 0.16, green: 0.78, blue: 0.25)
+        case .listening: return AnnaPalette.accent
+        case .thinking: return .orange
+        case .acting: return Color(red: 0.35, green: 0.50, blue: 0.95)
+        case .speaking: return .orange
         }
     }
 }
