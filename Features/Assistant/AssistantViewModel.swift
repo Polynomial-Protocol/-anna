@@ -18,7 +18,7 @@ final class AssistantViewModel: ObservableObject {
         return f
     }()
 
-    private let engine: AssistantEngine
+    let engine: AssistantEngine
     private let permissionService: PermissionService
     private let ttsService: TTSService
     private let pointerOverlayManager: PointerOverlayManager

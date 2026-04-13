@@ -11,4 +11,10 @@ enum PersistenceManager {
     static let conversationHistoryURL: URL = {
         appSupportURL.appendingPathComponent("conversation_history.json")
     }()
+
+    static let conversationDirectory: URL = {
+        let dir = appSupportURL.appendingPathComponent("chats")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
 }

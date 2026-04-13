@@ -84,15 +84,57 @@ struct AssistantEvent: Identifiable, Sendable {
 
 // MARK: - Conversation History
 
-struct ConversationTurn: Codable, Sendable {
+struct ConversationTurn: Codable, Sendable, Identifiable {
+    var id: UUID = UUID()
     let role: ConversationRole
     let content: String
     let timestamp: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id, role, content, timestamp
+    }
+
+    init(role: ConversationRole, content: String, timestamp: Date) {
+        self.id = UUID()
+        self.role = role
+        self.content = content
+        self.timestamp = timestamp
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try? c.decode(UUID.self, forKey: .id)) ?? UUID()
+        self.role = try c.decode(ConversationRole.self, forKey: .role)
+        self.content = try c.decode(String.self, forKey: .content)
+        self.timestamp = try c.decode(Date.self, forKey: .timestamp)
+    }
 }
 
 enum ConversationRole: String, Codable, Sendable {
     case user
     case assistant
+}
+
+// MARK: - Chat Sessions
+
+struct ChatSession: Identifiable, Codable, Sendable {
+    let id: UUID
+    var title: String
+    var turns: [ConversationTurn]
+    var createdAt: Date
+    var updatedAt: Date
+
+    var previewText: String {
+        turns.last?.content.prefix(80).description ?? "New conversation"
+    }
+
+    init(title: String = "New Chat") {
+        self.id = UUID()
+        self.title = title
+        self.turns = []
+        self.createdAt = Date()
+        self.updatedAt = Date()
+    }
 }
 
 // MARK: - Pointer Coordinate

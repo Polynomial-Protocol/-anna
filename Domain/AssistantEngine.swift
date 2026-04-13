@@ -39,6 +39,25 @@ actor AssistantEngine {
         self.settingsProvider = settingsProvider
     }
 
+    // MARK: - Chat Session Management
+
+    func allSessions() async -> [ChatSession] {
+        await conversationStore.activeSessions
+    }
+
+    @discardableResult
+    func conversationStoreNewSession() async -> ChatSession {
+        await conversationStore.newSession()
+    }
+
+    func selectSession(_ id: UUID) async {
+        await conversationStore.selectSession(id)
+    }
+
+    func deleteSession(_ id: UUID) async {
+        await conversationStore.deleteSession(id)
+    }
+
     func beginCapture(mode: CaptureMode) async throws {
         activeMode = mode
         try await audioCaptureService.beginCapture()
