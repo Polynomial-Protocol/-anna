@@ -105,13 +105,22 @@ final class AnnaAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showWindow() {
-        // Temporarily become regular app so windows activate properly
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        for window in NSApp.windows where window.canBecomeMain {
-            window.makeKeyAndOrderFront(nil)
-            return
+        // Try to find and show an existing window
+        for window in NSApp.windows {
+            if window.canBecomeMain || window.title.contains("Anna") || window.contentView != nil {
+                window.makeKeyAndOrderFront(nil)
+                window.orderFrontRegardless()
+                return
+            }
+        }
+
+        // If no window found, open a new one via SwiftUI
+        if #available(macOS 14.0, *) {
+            // Force SwiftUI to create a new window instance
+            NSApp.sendAction(Selector(("newWindowForTab:")), to: nil, from: nil)
         }
     }
 
@@ -125,10 +134,12 @@ final class AnnaAppDelegate: NSObject, NSApplicationDelegate {
 /// When all windows close, revert to accessory (menu-bar-only) mode so the dock icon disappears.
 extension AnnaAppDelegate {
     func applicationDidResignActive(_ notification: Notification) {
-        // Check if all windows are closed/miniaturized
-        let hasVisibleWindow = NSApp.windows.contains { $0.isVisible && $0.canBecomeMain }
-        if !hasVisibleWindow {
-            NSApp.setActivationPolicy(.accessory)
+        // Only revert to accessory mode if ALL main windows are truly closed (not just unfocused)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let hasVisibleWindow = NSApp.windows.contains { $0.isVisible && $0.canBecomeMain && !$0.isMiniaturized }
+            if !hasVisibleWindow {
+                NSApp.setActivationPolicy(.accessory)
+            }
         }
     }
 }

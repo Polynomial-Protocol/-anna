@@ -112,7 +112,7 @@ struct TextBarContent: View {
             TextField("Hey Anna...", text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(.primary.opacity(0.85))
                 .onSubmit {
                     let text = inputText.trimmingCharacters(in: .whitespaces)
                     guard !text.isEmpty else { return }
@@ -124,7 +124,7 @@ struct TextBarContent: View {
             if viewModel.status == .thinking {
                 ProgressView()
                     .scaleEffect(0.6)
-                    .tint(.white.opacity(0.5))
+                    .tint(.primary.opacity(0.5))
             }
         }
         .padding(.horizontal, 12)
@@ -134,7 +134,7 @@ struct TextBarContent: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.05), lineWidth: 0.5)
+                .stroke(Color.primary.opacity(0.05), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.2), radius: 16, y: 8)
     }

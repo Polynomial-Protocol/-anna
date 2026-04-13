@@ -1,4 +1,16 @@
 import SwiftUI
+import AVFoundation
+
+// MARK: - Theme (matching original Anna)
+
+private enum Theme {
+    static let red = Color(red: 0.839, green: 0.188, blue: 0.192)
+    static let ink = Color(red: 0.04, green: 0.04, blue: 0.04)
+    static let ink2 = Color(red: 0.27, green: 0.27, blue: 0.27)
+    static let ink3 = Color(red: 0.53, green: 0.53, blue: 0.53)
+}
+
+// MARK: - Onboarding View
 
 struct OnboardingView: View {
     @Binding var state: OnboardingState
@@ -6,9 +18,7 @@ struct OnboardingView: View {
     @ObservedObject var speechModelViewModel: SpeechModelViewModel
     var ttsService: TTSService
 
-    @State private var appeared = false
     @State private var cliStatuses: [CLIStatus] = []
-    @State private var cliChecking = false
     @State private var hasPlayedWelcome = false
     @State private var selectedProvider: AIProvider = .anthropic
     @State private var apiKeyText: String = ""
@@ -17,12 +27,31 @@ struct OnboardingView: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.06, green: 0.06, blue: 0.08)
-                .ignoresSafeArea()
+            // Light backdrop
+            Color(red: 0.96, green: 0.96, blue: 0.96).ignoresSafeArea()
+            LinearGradient(
+                colors: [.primary.opacity(0.0), .primary.opacity(0.4), .primary.opacity(0.8), .primary.opacity(0.95)],
+                startPoint: .top, endPoint: .bottom
+            ).ignoresSafeArea()
 
             VStack(spacing: 0) {
-                Spacer()
+                // Top bar
+                HStack {
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(Theme.red)
+                            .frame(width: 10, height: 10)
+                        Text("Anna")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(Theme.ink)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 40)
+                .padding(.top, 28)
+                .padding(.bottom, 20)
 
+                // Step content
                 Group {
                     switch state.currentStep {
                     case 0: welcomeStep
@@ -32,31 +61,88 @@ struct OnboardingView: View {
                     default: completionStep
                     }
                 }
-                .transition(.asymmetric(
-                    insertion: .opacity.combined(with: .offset(y: 16)),
-                    removal: .opacity.combined(with: .offset(y: -8))
-                ))
                 .id("step-\(state.currentStep)")
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(x: 30)),
+                    removal: .opacity.combined(with: .offset(x: -30))
+                ))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                Spacer()
+                // Footer
+                VStack(spacing: 20) {
+                    // Progress dots
+                    HStack(spacing: 6) {
+                        ForEach(0..<OnboardingState.totalSteps, id: \.self) { i in
+                            Capsule()
+                                .fill(i <= state.currentStep ? Theme.red : Theme.ink.opacity(0.12))
+                                .frame(width: i == state.currentStep ? 28 : 8, height: 8)
+                                .animation(.spring(response: 0.35), value: state.currentStep)
+                        }
+                    }
 
-                bottomBar
+                    HStack {
+                        if state.currentStep > 0 {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.25)) { state.currentStep -= 1 }
+                            } label: {
+                                Text("Back")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(Theme.ink2)
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 10)
+                                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.primary.opacity(0.6)))
+                                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(.primary.opacity(0.8), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        Spacer()
+
+                        Button {
+                            if state.currentStep >= OnboardingState.totalSteps - 1 {
+                                state.isComplete = true
+                            } else {
+                                withAnimation(.easeInOut(duration: 0.25)) { state.currentStep += 1 }
+                            }
+                        } label: {
+                            Text(state.currentStep >= OnboardingState.totalSteps - 1 ? "Get Started" : "Continue")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 28)
+                                .padding(.vertical, 12)
+                                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.red))
+                        }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut(.return)
+                    }
+                }
+                .padding(.top, 16)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 28)
             }
-            .frame(maxWidth: 460)
-            .padding(.horizontal, 40)
-            .padding(.vertical, 28)
+            .frame(maxWidth: 880)
+            .background(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(LinearGradient(colors: [.primary.opacity(0.55), .primary.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(LinearGradient(colors: [.primary.opacity(0.8), .primary.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.08), radius: 40, x: 0, y: 20)
+            .padding(40)
         }
-        .opacity(appeared ? 1 : 0)
+        .frame(minWidth: 960, minHeight: 700)
+        .environment(\.colorScheme, .light)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.5)) { appeared = true }
             refreshCLI()
-            // Load saved provider selection
             let saved = AppSettings.load().aiProvider
             if let provider = AIProvider(rawValue: saved) {
                 selectedProvider = provider
                 if provider.isAPI { apiKeyText = APIKeyStore.load(for: provider) ?? "" }
             }
-            // Play ambient pad + welcome voice on first appearance
             if !hasPlayedWelcome {
                 hasPlayedWelcome = true
                 ambientPlayer.play()
@@ -65,470 +151,348 @@ struct OnboardingView: View {
                 }
             }
         }
-        .onChange(of: state.currentStep) { _, _ in
-            ttsService.stop()
-        }
-        .onChange(of: state.isComplete) { _, completed in
-            if completed { ambientPlayer.stop() }
-        }
+        .onChange(of: state.currentStep) { _, _ in ttsService.stop() }
+        .onChange(of: state.isComplete) { _, completed in if completed { ambientPlayer.stop() } }
     }
 
     // MARK: - Step 0: Welcome
 
     private var welcomeStep: some View {
-        VStack(spacing: 28) {
-            VStack(spacing: 16) {
-                Text("anna")
-                    .font(.system(size: 52, weight: .thin))
-                    .tracking(8)
-                    .foregroundStyle(.white.opacity(0.88))
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTag("Voice-First AI Agent for macOS")
+                .padding(.bottom, 20)
 
-                Rectangle().fill(.white.opacity(0.08)).frame(width: 32, height: 1)
+            Text("Your voice.\nYour Mac.\nNo limits.")
+                .font(.system(size: 46, weight: .bold, design: .rounded))
+                .tracking(-2)
+                .foregroundStyle(Theme.ink)
+                .padding(.bottom, 16)
 
-                Text("your AI friend, right here on your Mac")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.4))
-                    .tracking(0.3)
+            Text("Anna turns natural speech into real actions — opening apps, browsing the web, writing text, managing your calendar. All locally processed. All private.")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Theme.ink2)
+                .lineSpacing(4)
+                .frame(maxWidth: 480, alignment: .leading)
+                .padding(.bottom, 32)
 
-                Text("just talk to me anytime \u{2014} I'm here for you")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.22))
-                    .padding(.top, 2)
+            HStack(spacing: 12) {
+                StatTile(value: "13", unit: "Tools", label: "Built-in actions")
+                StatTile(value: "4+", unit: "LLMs", label: "Model providers")
+                StatTile(value: "0", unit: "ms", label: "Cloud latency")
+                StatTile(value: "100", unit: "%", label: "Private & local")
             }
         }
+        .padding(.horizontal, 40)
     }
 
     // MARK: - Step 1: Capabilities
 
     private var capabilitiesStep: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("What Anna can do")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                Text("A quick look at how Anna helps you.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.35))
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTag("What Anna Can Do")
+                .padding(.bottom, 20)
 
-            VStack(spacing: 2) {
-                capabilityRow(icon: "waveform", title: "Voice commands",
-                              detail: "Hold Right \u{2318} and talk \u{2014} Anna listens, thinks, and acts.")
-                capabilityRow(icon: "character.cursor.ibeam", title: "Dictation",
-                              detail: "Hold Right \u{2325} to dictate text into any app.")
-                capabilityRow(icon: "eye", title: "Screen awareness",
-                              detail: "Anna can see your screen and point to what you need.")
-                capabilityRow(icon: "bolt.fill", title: "App control",
-                              detail: "Open apps, play music, search the web \u{2014} just ask.")
+            Text("Voice, vision,\nand action.")
+                .font(.system(size: 42, weight: .bold, design: .rounded))
+                .tracking(-1.5)
+                .foregroundStyle(Theme.ink)
+                .padding(.bottom, 10)
+
+            Text("Anna listens, sees your screen, and takes real actions on your Mac.")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Theme.ink2)
+                .lineSpacing(4)
+                .padding(.bottom, 28)
+
+            VStack(spacing: 10) {
+                capabilityCard(icon: "waveform", title: "Voice Commands", desc: "Hold Right \u{2318} and talk — Anna listens, thinks, and acts.")
+                capabilityCard(icon: "character.cursor.ibeam", title: "Dictation", desc: "Hold Right \u{2325} to dictate text into any app.")
+                capabilityCard(icon: "eye", title: "Screen Awareness", desc: "Anna sees your screen and points at what you need.")
+                capabilityCard(icon: "bolt.fill", title: "App Control", desc: "Open apps, play music, search the web — just ask.")
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 40)
     }
 
-    // MARK: - Step 2: Choose AI Backend
+    // MARK: - Step 2: AI Backend
 
     private var cliCheckStep: some View {
-        VStack(spacing: 20) {
-            VStack(spacing: 10) {
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 28, weight: .light))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .frame(width: 52, height: 52)
-                    .background(.white.opacity(0.04), in: Circle())
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTag("Connect Your AI")
+                .padding(.bottom, 20)
 
-                Text("Choose your AI")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
+            Text("Bring your\nown model.")
+                .font(.system(size: 42, weight: .bold, design: .rounded))
+                .tracking(-1.5)
+                .foregroundStyle(Theme.ink)
+                .padding(.bottom, 10)
 
-                Text("Pick how Anna connects to AI. You can change this anytime in Settings.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.35))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 340)
+            Text("Pick how Anna connects to AI. You can change this anytime in Settings.")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Theme.ink2)
+                .lineSpacing(4)
+                .padding(.bottom, 24)
+
+            VStack(spacing: 8) {
+                providerRow(.anthropic, icon: "sparkle", desc: "Best quality. Needs API key.", badge: "Recommended")
+                providerRow(.openai, icon: "bubble.left.fill", desc: "GPT-4o. Needs API key.", badge: nil)
+                let claudeOK = cliStatuses.first(where: { $0.backend == .claude })?.isInstalled == true
+                providerRow(.claudeCLI, icon: "terminal", desc: claudeOK ? "Installed and ready." : "Not installed.", badge: claudeOK ? "Installed" : nil)
             }
+            .padding(.bottom, 16)
 
-            // Provider cards
-            VStack(spacing: 6) {
-                // API options (recommended)
-                Text("WITH API KEY")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.25))
-                    .tracking(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                providerCard(
-                    provider: .anthropic,
-                    icon: "sparkle",
-                    subtitle: "Best quality. Needs an Anthropic API key.",
-                    badge: "Recommended"
-                )
-                providerCard(
-                    provider: .openai,
-                    icon: "bubble.left.fill",
-                    subtitle: "GPT-4o. Needs an OpenAI API key.",
-                    badge: nil
-                )
-
-                // CLI options
-                Text("WITH CLI TOOL")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.25))
-                    .tracking(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 6)
-
-                let claudeInstalled = cliStatuses.first(where: { $0.backend == .claude })?.isInstalled == true
-                let codexInstalled = cliStatuses.first(where: { $0.backend == .codex })?.isInstalled == true
-
-                providerCard(
-                    provider: .claudeCLI,
-                    icon: "terminal",
-                    subtitle: claudeInstalled ? "Installed and ready." : "Not installed.",
-                    badge: claudeInstalled ? "Installed" : nil
-                )
-                providerCard(
-                    provider: .codexCLI,
-                    icon: "terminal",
-                    subtitle: codexInstalled ? "Installed and ready." : "Not installed.",
-                    badge: codexInstalled ? "Installed" : nil
-                )
-            }
-
-            // API key input (shown for API providers)
             if selectedProvider.isAPI {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("API Key")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.45))
-
-                    HStack(spacing: 6) {
-                        SecureField(selectedProvider == .anthropic ? "sk-ant-..." : "sk-...", text: $apiKeyText)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.ink3)
+                    HStack(spacing: 8) {
+                        TextField("sk-...", text: $apiKeyText)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.7))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-
+                            .font(.system(size: 14, design: .monospaced))
+                            .foregroundStyle(Theme.ink)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.primary.opacity(0.5)))
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(.primary.opacity(0.7), lineWidth: 1))
                         Button {
                             APIKeyStore.save(key: apiKeyText, for: selectedProvider)
                             apiKeySaved = true
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { apiKeySaved = false }
                         } label: {
                             Text(apiKeySaved ? "Saved!" : "Save")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(apiKeySaved ? Color(hex: "69D3B0") : .white.opacity(0.55))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(.white.opacity(0.07), in: Capsule())
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(apiKeySaved ? .green : .white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(apiKeySaved ? Color.green.opacity(0.15) : Theme.red, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
-
-                    Text(selectedProvider == .anthropic
-                        ? "Get your key at console.anthropic.com"
-                        : "Get your key at platform.openai.com")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.2))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .padding(.horizontal, 40)
     }
 
-    private func providerCard(provider: AIProvider, icon: String, subtitle: String, badge: String?) -> some View {
-        let isSelected = selectedProvider == provider
+    // MARK: - Step 3: Permissions
 
+    private var permissionsStep: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTag("Permissions")
+                .padding(.bottom, 20)
+
+            Text("Grant access so\nAnna can help.")
+                .font(.system(size: 42, weight: .bold, design: .rounded))
+                .tracking(-1.5)
+                .foregroundStyle(Theme.ink)
+                .padding(.bottom, 10)
+
+            Text("These permissions let Anna hear you, read the screen, and type on your behalf.")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Theme.ink2)
+                .lineSpacing(4)
+                .padding(.bottom, 28)
+
+            VStack(spacing: 10) {
+                permissionCard(icon: "mic.fill", title: "Microphone", desc: "Voice input and dictation",
+                               granted: permissionsViewModel.statusFor(.microphone)?.isGranted ?? false) {
+                    AVAudioApplication.requestRecordPermission { _ in
+                        Task { @MainActor in permissionsViewModel.refresh() }
+                    }
+                }
+                permissionCard(icon: "hand.raised.fill", title: "Accessibility", desc: "Typing and app control",
+                               granted: AXIsProcessTrusted()) {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                }
+                permissionCard(icon: "rectangle.dashed.badge.record", title: "Screen Recording", desc: "Screenshots and visual guidance",
+                               granted: CGPreflightScreenCaptureAccess()) {
+                    CGRequestScreenCaptureAccess()
+                }
+            }
+
+            Text("Permissions refresh automatically when you return from System Settings.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.ink3)
+                .padding(.top, 14)
+        }
+        .padding(.horizontal, 40)
+    }
+
+    // MARK: - Step 4: Done
+
+    private var completionStep: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTag("All Set")
+                .padding(.bottom, 20)
+
+            Text("You're ready.\nStart talking.")
+                .font(.system(size: 46, weight: .bold, design: .rounded))
+                .tracking(-2)
+                .foregroundStyle(Theme.ink)
+                .padding(.bottom, 10)
+
+            Text("Anna lives in your menu bar. Use these shortcuts anytime.")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Theme.ink2)
+                .lineSpacing(4)
+                .padding(.bottom, 32)
+
+            VStack(spacing: 12) {
+                shortcutCard(keys: "Right \u{2318}", action: "Agent Mode", desc: "Speak a command, Anna plans and executes")
+                shortcutCard(keys: "Right \u{2325}", action: "Dictation", desc: "Your words appear at cursor instantly")
+                shortcutCard(keys: "\u{2318}\u{21E7}Space", action: "Text Bar", desc: "Type a command instead of speaking")
+            }
+        }
+        .padding(.horizontal, 40)
+    }
+
+    // MARK: - Shared Components
+
+    private func capabilityCard(icon: String, title: String, desc: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Theme.red)
+                .frame(width: 36, height: 36)
+                .background(Theme.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(desc).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink3)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(LinearGradient(colors: [.primary.opacity(0.45), .primary.opacity(0.2)], startPoint: .topLeading, endPoint: .bottomTrailing)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(LinearGradient(colors: [.primary.opacity(0.6), .primary.opacity(0.25)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
+    }
+
+    private func providerRow(_ provider: AIProvider, icon: String, desc: String, badge: String?) -> some View {
+        let isSelected = selectedProvider == provider
         return Button {
             withAnimation(.easeOut(duration: 0.15)) {
                 selectedProvider = provider
-                // Save selection immediately
                 var settings = AppSettings.load()
                 settings.aiProvider = provider.rawValue
                 settings.save()
-                // Load API key if switching to API provider
-                if provider.isAPI {
-                    apiKeyText = APIKeyStore.load(for: provider) ?? ""
-                    apiKeySaved = false
-                }
+                if provider.isAPI { apiKeyText = APIKeyStore.load(for: provider) ?? ""; apiKeySaved = false }
             }
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 13))
-                    .foregroundStyle(isSelected ? .white.opacity(0.8) : .white.opacity(0.35))
-                    .frame(width: 20)
-
+            HStack(spacing: 12) {
+                Image(systemName: icon).font(.system(size: 14, weight: .semibold)).foregroundStyle(isSelected ? Theme.red : Theme.ink3).frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(provider.rawValue)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(isSelected ? .white.opacity(0.85) : .white.opacity(0.55))
-
+                        Text(provider.rawValue).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
                         if let badge {
-                            Text(badge)
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(badge == "Recommended" ? Color(hex: "69D3B0").opacity(0.8) : Color(hex: "69D3B0").opacity(0.7))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color(hex: "69D3B0").opacity(0.1), in: Capsule())
+                            Text(badge).font(.system(size: 9, weight: .bold)).foregroundStyle(.green).padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(.green.opacity(0.1), in: Capsule())
                         }
                     }
-                    Text(subtitle)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.25))
+                    Text(desc).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.ink3)
                 }
-
                 Spacer()
-
-                Circle()
-                    .fill(isSelected ? .white.opacity(0.8) : .clear)
-                    .frame(width: 8, height: 8)
-                    .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 1))
+                Circle().fill(isSelected ? Theme.red : .clear).frame(width: 10, height: 10)
+                    .overlay(Circle().stroke(isSelected ? Theme.red : Theme.ink.opacity(0.15), lineWidth: 1.5))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? .white.opacity(0.06) : .white.opacity(0.02))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(isSelected ? .white.opacity(0.1) : .clear, lineWidth: 1)
-                    )
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isSelected
+                        ? AnyShapeStyle(Theme.red.opacity(0.04))
+                        : AnyShapeStyle(LinearGradient(colors: [.primary.opacity(0.45), .primary.opacity(0.2)], startPoint: .topLeading, endPoint: .bottomTrailing)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isSelected
+                        ? AnyShapeStyle(Theme.red.opacity(0.3))
+                        : AnyShapeStyle(LinearGradient(colors: [.primary.opacity(0.6), .primary.opacity(0.25)], startPoint: .topLeading, endPoint: .bottomTrailing)),
+                    lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Step 3: Permissions (Grouped)
-
-    private var permissionsStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Permissions")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                Text("Anna needs a few permissions to work. You can adjust these later in Settings.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.35))
+    private func permissionCard(icon: String, title: String, desc: String, granted: Bool, onRequest: @escaping () -> Void) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon).font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.red)
+                .frame(width: 36, height: 36).background(Theme.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(desc).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink3)
             }
-
-            // Required group
-            permissionGroup("Required", permissions: PermissionKind.PermissionGroup.required.permissions, accent: Color(hex: "FFC764"))
-
-            // Optional group
-            permissionGroup("Optional", permissions: PermissionKind.PermissionGroup.optional.permissions, accent: .white.opacity(0.3))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - Step 4: Completion
-
-    private var completionStep: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: 32, weight: .light))
-                .foregroundStyle(Color(hex: "69D3B0").opacity(0.7))
-
-            Text("You're all set.")
-                .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(.white.opacity(0.85))
-
-            VStack(spacing: 8) {
-                Text("Hold Right \u{2318} anytime to talk to Anna.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.4))
-                Text("Hold Right \u{2325} to dictate text anywhere.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.4))
-            }
-
-            let requiredMissing = PermissionKind.PermissionGroup.required.permissions
-                .contains { permissionsViewModel.statusFor($0)?.isGranted != true }
-            let cliMissing = !cliStatuses.contains(where: \.isInstalled)
-
-            if requiredMissing || cliMissing {
-                VStack(spacing: 4) {
-                    Rectangle().fill(.white.opacity(0.06)).frame(width: 40, height: 1)
-                        .padding(.top, 8)
-                    Text("Some setup is incomplete. You can finish it later in the Permission Center or Settings.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.25))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 300)
-                }
-            }
-        }
-    }
-
-    // MARK: - Bottom Bar
-
-    private var bottomBar: some View {
-        HStack {
-            HStack(spacing: 6) {
-                ForEach(0..<OnboardingState.totalSteps, id: \.self) { i in
-                    Circle()
-                        .fill(i == state.currentStep ? .white.opacity(0.7) : .white.opacity(0.12))
-                        .frame(width: 5, height: 5)
-                }
-            }
-
             Spacer()
-
-            if state.currentStep == 2 {
-                // CLI step: always allow skip
-                Button("Skip") { advance() }
-                    .buttonStyle(OnboardingGhostButton())
-
-                if cliStatuses.contains(where: \.isInstalled) {
-                    Button("Continue") { advance() }
-                        .buttonStyle(OnboardingPillButton())
-                }
-            } else if state.currentStep == 3 {
-                // Permissions step: skip or continue
-                Button("Skip") { advance() }
-                    .buttonStyle(OnboardingGhostButton())
-                Button("Continue") { advance() }
-                    .buttonStyle(OnboardingPillButton())
-            } else if state.currentStep == OnboardingState.totalSteps - 1 {
-                Button("Start") {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                        state.isComplete = true
-                    }
-                }
-                .buttonStyle(OnboardingPillButton())
+            if granted {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 14))
+                    Text("Granted").font(.system(size: 13, weight: .semibold))
+                }.foregroundStyle(.green)
             } else {
-                Button("Continue") { advance() }
-                    .buttonStyle(OnboardingPillButton())
+                Button { onRequest() } label: {
+                    Text("Grant").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 16).padding(.vertical, 7)
+                        .background(Theme.red, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }.buttonStyle(.plain)
             }
         }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(LinearGradient(colors: [.primary.opacity(0.45), .primary.opacity(0.2)], startPoint: .topLeading, endPoint: .bottomTrailing)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(LinearGradient(colors: [.primary.opacity(0.6), .primary.opacity(0.25)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
     }
 
-    // MARK: - Welcome Script
-
-    private static let welcomeScript = "Hey, I'm Anna, your AI friend. I live right here on your Mac, and honestly, I'm just happy to be here. Think of me like a friend who's really good with computers. You talk, I listen, and I'll do my best to help. If you ever get stuck or have questions, just ask me, I'm not going anywhere. Let's get you set up, it'll only take a minute."
+    private func shortcutCard(keys: String, action: String, desc: String) -> some View {
+        HStack(spacing: 14) {
+            Text(keys).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.ink)
+                .frame(width: 100).padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.primary.opacity(0.45)))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(.primary.opacity(0.6), lineWidth: 1))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action).font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(desc).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.ink3)
+            }
+            Spacer()
+        }
+    }
 
     // MARK: - Helpers
 
-    private func advance() {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            if state.currentStep >= OnboardingState.totalSteps - 1 {
-                state.isComplete = true
-            } else {
-                state.currentStep += 1
-            }
-        }
-    }
-
     private func refreshCLI() {
-        cliChecking = true
-        DispatchQueue.global().async {
-            let statuses = CLIStatus.detectAll()
-            DispatchQueue.main.async {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    self.cliStatuses = statuses
-                    self.cliChecking = false
-                }
-            }
-        }
+        cliStatuses = CLIStatus.detectAll()
     }
 
-    private func permissionGroup(_ title: String, permissions: [PermissionKind], accent: Color) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(accent.opacity(0.7))
-                .tracking(1)
+    static let welcomeScript = "Hey there! I'm Anna, your AI friend on the Mac. Let me walk you through the quick setup, and then we'll be good to go."
+}
 
-            VStack(spacing: 1) {
-                ForEach(permissions, id: \.self) { kind in
-                    let status = permissionsViewModel.statusFor(kind)
-                    HStack(spacing: 10) {
-                        Image(systemName: kind.icon)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.4))
-                            .frame(width: 18)
+// MARK: - Shared UI Components
 
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(kind.displayName)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.7))
-                            Text(kind.reason)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.white.opacity(0.25))
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-
-                        if status?.isGranted == true {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color(hex: "69D3B0"))
-                        } else {
-                            Button {
-                                permissionsViewModel.request(kind)
-                            } label: {
-                                Text("Grant")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.55))
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 3)
-                                    .background(.white.opacity(0.07), in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(Color.white.opacity(0.03))
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-    }
-
-    private func capabilityRow(icon: String, title: String, detail: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.4))
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
-                Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.3))
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.white.opacity(0.03))
+private struct SectionTag: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text.uppercased())
+            .font(.system(size: 11, weight: .bold))
+            .tracking(2.5)
+            .foregroundStyle(Theme.red)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(Theme.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
-// MARK: - Button Styles
-
-private struct OnboardingPillButton: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.white.opacity(0.85))
-            .padding(.horizontal, 18)
-            .padding(.vertical, 7)
-            .background(.white.opacity(configuration.isPressed ? 0.06 : 0.1), in: Capsule())
-    }
-}
-
-private struct OnboardingGhostButton: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13))
-            .foregroundStyle(.white.opacity(configuration.isPressed ? 0.2 : 0.3))
-            .padding(.trailing, 8)
+private struct StatTile: View {
+    let value: String
+    let unit: String
+    let label: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.system(size: 32, weight: .bold, design: .rounded)).tracking(-1).foregroundStyle(Theme.ink)
+            Text(unit).font(.system(size: 13, weight: .bold)).textCase(.uppercase).tracking(0.5).foregroundStyle(Theme.red)
+            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.ink3).padding(.top, 2)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(LinearGradient(colors: [.primary.opacity(0.5), .primary.opacity(0.25)], startPoint: .topLeading, endPoint: .bottomTrailing)))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(LinearGradient(colors: [.primary.opacity(0.7), .primary.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
     }
 }

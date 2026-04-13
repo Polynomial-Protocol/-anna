@@ -141,7 +141,7 @@ struct ResponseOverlayContent: View {
     private var responseView: some View {
         Text(viewModel.streamingText)
             .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
+            .foregroundStyle(.primary.opacity(0.9))
             .multilineTextAlignment(.trailing)
             .lineLimit(6)
             .padding(.horizontal, 16)
@@ -171,7 +171,7 @@ struct ResponseOverlayContent: View {
 
             Text(viewModel.status.displayText)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(.primary.opacity(0.8))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -200,7 +200,7 @@ struct ResponseOverlayContent: View {
         HStack(spacing: 3) {
             ForEach(0..<3, id: \.self) { i in
                 Circle()
-                    .fill(.white.opacity(0.6))
+                    .fill(.primary.opacity(0.6))
                     .frame(width: 4, height: 4)
                     .modifier(BounceDotModifier(delay: Double(i) * 0.15))
             }

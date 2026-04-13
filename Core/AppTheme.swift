@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 extension Color {
     init(hex: String) {
@@ -21,14 +22,38 @@ extension Color {
             opacity: Double(a) / 255
         )
     }
+
+    /// Creates a color that adapts to light/dark appearance automatically.
+    init(light: Color, dark: Color) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            switch appearance.bestMatch(from: [.aqua, .darkAqua]) {
+            case .darkAqua?:
+                return NSColor(dark)
+            default:
+                return NSColor(light)
+            }
+        })
+    }
 }
 
 enum AnnaPalette {
-    // Dark theme
-    static let canvas = Color(red: 0.07, green: 0.07, blue: 0.10)
-    static let pane = Color(red: 0.10, green: 0.10, blue: 0.14)
-    static let surface = Color(red: 0.13, green: 0.13, blue: 0.17)
-    static let sidebar = Color(red: 0.08, green: 0.08, blue: 0.11)
+    // Adaptive background colors
+    static let canvas = Color(
+        light: Color(red: 0.96, green: 0.96, blue: 0.97),  // #F5F5F7
+        dark: Color(red: 0.07, green: 0.07, blue: 0.10)
+    )
+    static let pane = Color(
+        light: .white,
+        dark: Color(red: 0.10, green: 0.10, blue: 0.14)
+    )
+    static let surface = Color(
+        light: Color(red: 0.94, green: 0.94, blue: 0.96),  // #F0F0F5
+        dark: Color(red: 0.13, green: 0.13, blue: 0.17)
+    )
+    static let sidebar = Color(
+        light: Color(red: 0.96, green: 0.96, blue: 0.97),  // #F5F5F7
+        dark: Color(red: 0.08, green: 0.08, blue: 0.11)
+    )
 
     // Accent colors
     static let accent = Color(red: 0.85, green: 0.18, blue: 0.18)
@@ -41,7 +66,16 @@ enum AnnaPalette {
     static let cloud = Color(hex: "F3EEE8")
     static let mint = Color(hex: "69D3B0")
     static let warning = Color(hex: "FFC764")
-    static let panel = Color.white.opacity(0.08)
+    static let panel = Color(
+        light: Color.black.opacity(0.04),
+        dark: Color.white.opacity(0.08)
+    )
+
+    // Adaptive separator
+    static let separator = Color(
+        light: Color.black.opacity(0.08),
+        dark: Color.white.opacity(0.06)
+    )
 }
 
 enum AnnaStatus: String, CaseIterable, Sendable {

@@ -233,7 +233,7 @@ final class AssistantViewModel: ObservableObject {
 
     private var guidedModeStepCount = 0
     private let maxGuidedSteps = 8
-    private var isInTourMode = false
+    @Published var isInTourMode = false
 
     private static let tourKeywords = [
         "tour", "walk me through", "walkthrough", "walk through",
@@ -247,20 +247,31 @@ final class AssistantViewModel: ObservableObject {
         return Self.tourKeywords.contains { lower.contains($0) }
     }
 
+    /// Detects the [POINT:none] end-of-tour marker that doesn't match the coordinate regex.
+    private static func isTourEndMarker(_ text: String) -> Bool {
+        text.range(of: #"\[POINT:\s*none\s*\]"#, options: .regularExpression) != nil
+    }
+
     private func handlePointerAndSpeak(pointer: PointerCoordinate?, responseText: String) {
         let isClick = pointer?.action == .click
         let clickLocation = isClick ? pointer.flatMap { PointerOverlayManager.screenLocation(for: $0) } : nil
+        let isTourEnd = Self.isTourEndMarker(responseText)
 
-        // Step 1: Fly buddy to target
+        // Step 1: Ensure overlay is visible when we have something to show
+        if pointer != nil && !self.pointerOverlayManager.isVisible {
+            self.pointerOverlayManager.showOverlay(viewModel: self)
+        }
+
+        // Step 2: Fly buddy to target
         if let pointer = pointer {
             self.pointerOverlayManager.pointAt(pointer)
         }
 
-        // Step 2: Speak, then sequence click and continuation AFTER speech ends
+        // Step 3: Speak, then sequence click and continuation AFTER speech ends
         let settings = self.settingsProvider()
         if settings.ttsEnabled {
             self.status = .speaking
-            self.ttsService.speak(responseText, rate: settings.ttsRate, voiceIdentifier: settings.ttsVoiceIdentifier)
+            self.ttsService.speak(responseText, rate: settings.ttsRate, voiceIdentifier: settings.ttsVoiceIdentifier, engine: settings.ttsEngine, elevenLabsVoiceID: settings.elevenLabsVoiceID)
         }
 
         Task {
@@ -273,38 +284,55 @@ final class AssistantViewModel: ObservableObject {
 
             await MainActor.run {
                 if isClick, let loc = clickLocation {
-                    // Step 3: Click AFTER speech finishes
+                    // Click AFTER speech finishes
                     self.pointerOverlayManager.clickRippleAt = loc
                     ClickSimulator.click(at: loc)
                     self.logger?.log("Guided click at (\(Int(loc.x)), \(Int(loc.y))): \(pointer?.label ?? "element")", tag: "guide")
 
-                    // Step 4: Hide pointer
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        self.pointerOverlayManager.hide()
-                    }
-
-                    // Step 5: Only auto-continue if in tour mode
                     if self.isInTourMode {
+                        // Tour mode: keep overlay, continue after delay
                         self.guidedModeStepCount += 1
+                        self.statusLine = "Showing you around... step \(self.guidedModeStepCount + 1)"
                         if self.guidedModeStepCount < self.maxGuidedSteps {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                                 self.continueGuidedWalkthrough()
                             }
                         } else {
-                            self.guidedModeStepCount = 0
-                            self.isInTourMode = false
-                            self.status = .idle
-                            self.statusLine = "All done — I'm here if you need me."
+                            self.finishTour()
                         }
                     } else {
-                        // One-off click — just finish
+                        // One-off click — hide pointer after brief delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            self.pointerOverlayManager.hide()
+                        }
                         self.status = .idle
                         self.statusLine = "All done — I'm here if you need me."
                     }
+
+                } else if isTourEnd {
+                    // Explicit tour end: [POINT:none]
+                    self.finishTour()
+
+                } else if self.isInTourMode {
+                    // Mid-tour response without a click (e.g., POINT action or description-only)
+                    // Keep tour alive and continue to next step
+                    self.guidedModeStepCount += 1
+                    if pointer != nil {
+                        // Has a POINT — show it briefly, then continue
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                            self.continueGuidedWalkthrough()
+                        }
+                    } else if self.guidedModeStepCount < self.maxGuidedSteps {
+                        // No pointer but still in tour — continue
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self.continueGuidedWalkthrough()
+                        }
+                    } else {
+                        self.finishTour()
+                    }
+
                 } else {
-                    // No click — just finish (also ends tour mode)
-                    self.guidedModeStepCount = 0
-                    self.isInTourMode = false
+                    // Not in tour mode, no click — just finish
                     self.pointerOverlayManager.hide()
                     self.status = .idle
                     self.statusLine = "All done — I'm here if you need me."
@@ -313,15 +341,29 @@ final class AssistantViewModel: ObservableObject {
         }
     }
 
+    private func finishTour() {
+        self.guidedModeStepCount = 0
+        self.isInTourMode = false
+        self.pointerOverlayManager.hide()
+        self.status = .idle
+        self.statusLine = "All done — I'm here if you need me."
+        self.logger?.log("Guided tour completed", tag: "guide")
+    }
+
     private func continueGuidedWalkthrough() {
         guard !isCapturing else { return }
         self.status = .thinking
-        self.statusLine = "Showing you the next step..."
+        self.statusLine = "Showing you around... step \(guidedModeStepCount + 1)"
         self.logger?.log("Guided mode: continuing walkthrough (step \(guidedModeStepCount + 1))", tag: "guide")
+
+        // Ensure overlay is visible for the next pointer
+        if !self.pointerOverlayManager.isVisible {
+            self.pointerOverlayManager.showOverlay(viewModel: self)
+        }
 
         Task {
             do {
-                let result = try await engine.executeText("The click happened and the UI updated. Look at the screenshot — which tab or screen is active NOW? Describe what you SEE in 1-2 sentences, then click the next thing in the tour using [CLICK:x,y:label]. Only describe what is CURRENTLY visible, not what was there before.")
+                let result = try await engine.executeInternalText("The click happened and the UI updated. Look at the screenshot carefully. Describe what you SEE on this screen in 1-2 short sentences, then click the next element in the tour using [CLICK:x,y:label]. Guide through whatever app is currently visible — do NOT try to switch apps. If the tour is complete, say a brief wrap-up and use [POINT:none].")
                 await MainActor.run {
                     self.lastTranscript = "Guided walkthrough (step \(self.guidedModeStepCount + 1))"
                     self.lastTranscriptTime = Date()
@@ -381,6 +423,12 @@ final class AssistantViewModel: ObservableObject {
         if status == .speaking {
             status = .idle
         }
+    }
+
+    func stopTour() {
+        ttsService.stop()
+        finishTour()
+        logger?.log("Tour stopped by user", tag: "guide")
     }
 
     func refreshPermissionsSummary() -> String {

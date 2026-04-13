@@ -14,6 +14,8 @@ struct ScreenCaptureResult: Sendable {
 @MainActor
 final class ScreenCaptureService {
 
+    var excludeAnnaWindow: Bool = false
+
     func captureScreen() async throws -> ScreenCaptureResult {
         guard CGPreflightScreenCaptureAccess() else {
             throw AnnaError.screenCaptureFailed("Screen Recording permission not granted.")
@@ -37,7 +39,10 @@ final class ScreenCaptureService {
         let ownBundleID = Bundle.main.bundleIdentifier
         let overlayWindows = content.windows.filter { window in
             guard window.owningApplication?.bundleIdentifier == ownBundleID else { return false }
-            return window.title?.isEmpty ?? true || window.frame.width >= CGFloat(mainDisplay.width)
+            // Always exclude overlay windows (empty title or fullscreen)
+            let isOverlay = window.title?.isEmpty ?? true || window.frame.width >= CGFloat(mainDisplay.width)
+            // When excludeAnnaWindow is true, also exclude the main Anna window
+            return isOverlay || excludeAnnaWindow
         }
 
         let filter = SCContentFilter(display: mainDisplay, excludingWindows: overlayWindows)

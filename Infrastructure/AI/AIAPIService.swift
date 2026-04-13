@@ -101,7 +101,7 @@ actor AIAPIService {
             textParts.append("Previous conversation:\n\(context)")
         }
         if screenshotPath != nil && screenshotWidth > 0 && screenshotHeight > 0 {
-            textParts.append("The screenshot is \(screenshotWidth)x\(screenshotHeight) pixels. Origin (0,0) is the top-left corner. When using [POINT:x,y:label], x ranges from 0 to \(screenshotWidth) and y ranges from 0 to \(screenshotHeight).")
+            textParts.append("The screenshot is \(screenshotWidth)x\(screenshotHeight) pixels. Origin (0,0) is the top-left corner. Use [CLICK:x,y:label] to click elements or [POINT:x,y:label] to point. x ranges from 0 to \(screenshotWidth), y ranges from 0 to \(screenshotHeight). Aim for the CENTER of buttons and elements.")
         }
         textParts.append(request)
 
@@ -259,7 +259,7 @@ actor AIAPIService {
             textParts.append("Previous conversation:\n\(context)")
         }
         if screenshotPath != nil && screenshotWidth > 0 && screenshotHeight > 0 {
-            textParts.append("The screenshot is \(screenshotWidth)x\(screenshotHeight) pixels. Origin (0,0) is the top-left corner. When using [POINT:x,y:label], x ranges from 0 to \(screenshotWidth) and y ranges from 0 to \(screenshotHeight).")
+            textParts.append("The screenshot is \(screenshotWidth)x\(screenshotHeight) pixels. Origin (0,0) is the top-left corner. Use [CLICK:x,y:label] to click elements or [POINT:x,y:label] to point. x ranges from 0 to \(screenshotWidth), y ranges from 0 to \(screenshotHeight). Aim for the CENTER of buttons and elements.")
         }
         textParts.append(request)
 
@@ -486,6 +486,29 @@ enum APIKeyStore {
         let path = keyFilePath(for: provider)
         try? FileManager.default.removeItem(at: path)
         deleteFromKeychain(for: provider)
+    }
+
+    // MARK: - Generic Key Storage (for non-AIProvider keys like ElevenLabs)
+
+    static func save(key: String, forService service: String) {
+        ensureDirectory()
+        let path = storageDirectory.appendingPathComponent("apikey-\(service)")
+        do {
+            try key.write(to: path, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: path.path
+            )
+        } catch {}
+    }
+
+    static func load(forService service: String) -> String? {
+        let path = storageDirectory.appendingPathComponent("apikey-\(service)")
+        if let key = try? String(contentsOf: path, encoding: .utf8),
+           !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return key.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
     }
 
     // MARK: - Keychain Migration (silent, no prompts)

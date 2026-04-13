@@ -11,7 +11,7 @@ struct GlassPanel<Content: View>: View {
                     .fill(AnnaPalette.panel)
                     .overlay(
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color.white.opacity(0.05), lineWidth: 0.5)
+                            .stroke(Color.primary.opacity(0.05), lineWidth: 0.5)
                     )
             )
     }

@@ -89,16 +89,18 @@ struct ConversationTurn: Codable, Sendable, Identifiable {
     let role: ConversationRole
     let content: String
     let timestamp: Date
+    var isInternal: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case id, role, content, timestamp
+        case id, role, content, timestamp, isInternal
     }
 
-    init(role: ConversationRole, content: String, timestamp: Date) {
+    init(role: ConversationRole, content: String, timestamp: Date, isInternal: Bool = false) {
         self.id = UUID()
         self.role = role
         self.content = content
         self.timestamp = timestamp
+        self.isInternal = isInternal
     }
 
     init(from decoder: Decoder) throws {
@@ -107,6 +109,7 @@ struct ConversationTurn: Codable, Sendable, Identifiable {
         self.role = try c.decode(ConversationRole.self, forKey: .role)
         self.content = try c.decode(String.self, forKey: .content)
         self.timestamp = try c.decode(Date.self, forKey: .timestamp)
+        self.isInternal = (try? c.decode(Bool.self, forKey: .isInternal)) ?? false
     }
 }
 
@@ -169,11 +172,14 @@ struct AppSettings: Codable, Sendable {
     var ttsEnabled: Bool = true
     var ttsRate: Float = 0.46
     var ttsVoiceIdentifier: String = "com.apple.voice.compact.en-US.Samantha"
+    var ttsEngine: String = "apple"  // "apple", "elevenlabs"
+    var elevenLabsVoiceID: String = "pNInz6obpgDQGcFmaJgB"  // "Adam" default
     var lastSelectedTab: String = "Anna"
     var knowledgeBaseEnabled: Bool = true
     var clipboardCaptureEnabled: Bool = true
     var aiProvider: String = AIProvider.anthropic.rawValue
     var activeTourGuideID: String = ""
+    var appTheme: String = "system" // "light", "dark", "system"
 
     static let defaultValue = AppSettings()
 

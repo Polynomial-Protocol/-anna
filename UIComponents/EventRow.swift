@@ -14,15 +14,15 @@ struct EventRow: View {
                 HStack {
                     Text(event.title)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(.primary.opacity(0.7))
                     Spacer()
                     Text(event.timestamp, style: .time)
                         .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.25))
+                        .foregroundStyle(.primary.opacity(0.25))
                 }
                 Text(event.body)
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(.primary.opacity(0.4))
                     .lineLimit(2)
             }
         }
@@ -31,7 +31,7 @@ struct EventRow: View {
 
     private var toneColor: Color {
         switch event.tone {
-        case .neutral: return .white.opacity(0.2)
+        case .neutral: return .primary.opacity(0.2)
         case .success: return Color(hex: "69D3B0")
         case .warning: return Color(hex: "FFC764")
         case .failure: return .red.opacity(0.7)

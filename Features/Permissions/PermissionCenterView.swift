@@ -10,7 +10,7 @@ struct PermissionCenterView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Permission Center")
                         .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .foregroundStyle(.primary.opacity(0.85))
 
                     if viewModel.allGranted {
                         HStack(spacing: 6) {
@@ -24,7 +24,7 @@ struct PermissionCenterView: View {
                     } else {
                         Text("Anna needs a few permissions to work properly. Nothing leaves your Mac.")
                             .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.35))
+                            .foregroundStyle(.primary.opacity(0.35))
                     }
                 }
 
@@ -48,7 +48,7 @@ struct PermissionCenterView: View {
                     Text("Permissions refresh automatically when Anna becomes active.")
                         .font(.system(size: 10))
                 }
-                .foregroundStyle(.white.opacity(0.2))
+                .foregroundStyle(.primary.opacity(0.2))
                 .padding(.top, 4)
             }
             .padding(24)
@@ -65,18 +65,18 @@ struct PermissionCenterView: View {
                     .foregroundStyle(Color(hex: "FFC764"))
                 Text("Some permissions need attention")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(.primary.opacity(0.7))
             }
 
             let deniedRequired = viewModel.deniedPermissions.filter(\.kind.isRequired)
             if !deniedRequired.isEmpty {
                 Text("Required permissions missing: \(deniedRequired.map(\.kind.displayName).joined(separator: ", ")). Core features won't work without these.")
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(.primary.opacity(0.35))
             } else {
                 Text("Optional permissions are missing. Anna works without them, but some features will be limited.")
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(.primary.opacity(0.35))
             }
         }
         .padding(12)
@@ -104,7 +104,7 @@ struct PermissionCenterView: View {
                     HStack(spacing: 6) {
                         Text(status.kind.displayName)
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.75))
+                            .foregroundStyle(.primary.opacity(0.75))
 
                         if status.kind.isRequired {
                             Text("Required")
@@ -118,7 +118,7 @@ struct PermissionCenterView: View {
 
                     Text(status.kind.reason)
                         .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.3))
+                        .foregroundStyle(.primary.opacity(0.3))
                         .lineLimit(2)
                 }
 
@@ -131,12 +131,12 @@ struct PermissionCenterView: View {
             // Recovery instructions when denied
             if status.needsAttention {
                 VStack(alignment: .leading, spacing: 8) {
-                    Rectangle().fill(.white.opacity(0.04)).frame(height: 1)
+                    Rectangle().fill(.primary.opacity(0.04)).frame(height: 1)
                         .padding(.top, 8)
 
                     Text(status.kind.denialInstructions)
                         .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.35))
+                        .foregroundStyle(.primary.opacity(0.35))
 
                     HStack(spacing: 8) {
                         Button {
@@ -148,10 +148,10 @@ struct PermissionCenterView: View {
                                 Text("Retry")
                                     .font(.system(size: 11, weight: .medium))
                             }
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(.primary.opacity(0.55))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(.white.opacity(0.07), in: Capsule())
+                            .background(.primary.opacity(0.07), in: Capsule())
                         }
                         .buttonStyle(.plain)
 
@@ -164,10 +164,10 @@ struct PermissionCenterView: View {
                                 Text("Open System Settings")
                                     .font(.system(size: 11, weight: .medium))
                             }
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(.primary.opacity(0.55))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(.white.opacity(0.07), in: Capsule())
+                            .background(.primary.opacity(0.07), in: Capsule())
                         }
                         .buttonStyle(.plain)
                     }
@@ -176,7 +176,7 @@ struct PermissionCenterView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(Color.white.opacity(0.03))
+        .background(Color.primary.opacity(0.03))
     }
 
     // MARK: - Status Badge
@@ -199,10 +199,10 @@ struct PermissionCenterView: View {
             } label: {
                 Text("Grant")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.primary.opacity(0.6))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
-                    .background(.white.opacity(0.08), in: Capsule())
+                    .background(.primary.opacity(0.08), in: Capsule())
             }
             .buttonStyle(.plain)
 

@@ -58,6 +58,10 @@ actor AssistantEngine {
         await conversationStore.deleteSession(id)
     }
 
+    func currentSessionTurns() async -> [ConversationTurn] {
+        await conversationStore.allTurns()
+    }
+
     func beginCapture(mode: CaptureMode) async throws {
         activeMode = mode
         try await audioCaptureService.beginCapture()
@@ -125,9 +129,27 @@ actor AssistantEngine {
         }
     }
 
+    /// Execute an internal text command (e.g., tour continuation) — marks user turn as internal so it doesn't show in chat.
+    func executeInternalText(_ text: String) async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
+        let tier = IntentRouter.route(text)
+        switch tier {
+        case .direct(let action):
+            let outcome = try await directExecutor.execute(action)
+            return (text, outcome, nil)
+
+        case .agent(let request):
+            return try await executeAgent(request: request, transcript: text, isInternal: true)
+        }
+    }
+
     // MARK: - Agent Execution (shared by voice and text paths)
 
-    private func executeAgent(request: String, transcript: String) async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
+    private func executeAgent(request: String, transcript: String, isInternal: Bool = false) async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
+        // Exclude Anna's own window from screenshot when touring non-Anna apps
+        let settings = settingsProvider()
+        let hasExternalTourGuide = !settings.activeTourGuideID.isEmpty
+        await MainActor.run { screenCaptureService.excludeAnnaWindow = hasExternalTourGuide }
+
         // Capture screenshot — track both pixel dimensions and display point dimensions
         var screenshotPath: String? = nil
         var screenshotPixelWidth: Int = 0
@@ -153,7 +175,7 @@ actor AssistantEngine {
         }
 
         await conversationStore.append(ConversationTurn(
-            role: .user, content: request, timestamp: Date()
+            role: .user, content: request, timestamp: Date(), isInternal: isInternal
         ))
 
         let historyContext = await buildHistoryContext()
@@ -308,16 +330,21 @@ actor AssistantEngine {
 
     private func buildTourGuideContext() async -> String? {
         let settings = settingsProvider()
-        guard !settings.activeTourGuideID.isEmpty else { return nil }
-        guard let guide = await tourGuideStore.guideByID(settings.activeTourGuideID) else { return nil }
-        guard let content = await tourGuideStore.loadContent(for: guide) else { return nil }
 
-        return """
-        ACTIVE TOUR GUIDE — "\(guide.displayName)":
-        Use this knowledge base to guide the user through the app. CRITICAL: Do ONE step per response. Say 1-2 sentences about what's on screen, then end with [CLICK:x,y:label] to navigate to the next thing. After each click, a new screenshot will arrive and you continue the tour. Never dump all steps at once. Never use filler words like "perfect" or "great" between steps. Keep it flowing naturally like a friend showing you around.
+        // If a tour guide is active, inject its content
+        if !settings.activeTourGuideID.isEmpty,
+           let guide = await tourGuideStore.guideByID(settings.activeTourGuideID),
+           let content = await tourGuideStore.loadContent(for: guide) {
+            return """
+            ACTIVE TOUR GUIDE — "\(guide.displayName)":
+            Use this knowledge base to guide the user through the app visible on screen. CRITICAL: Do ONE step per response. Say 1-2 short sentences about what's on screen, then end with [CLICK:x,y:label]. After each click, a new screenshot will arrive and you continue. Never dump all steps at once. No filler words. Keep it natural.
 
-        \(content)
-        """
+            \(content)
+            """
+        }
+
+        // No external tour guide active — include Anna's own knowledge base so she can answer questions about herself
+        return AnnaKnowledgeBase.appGuide
     }
 
     // MARK: - Pointer Parsing

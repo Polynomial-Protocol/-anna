@@ -1,6 +1,25 @@
 import AVFoundation
 import Foundation
 
+// MARK: - ElevenLabs Voice Catalog
+
+struct ElevenLabsVoice: Identifiable, Hashable {
+    let id: String       // voice_id
+    let name: String
+    let description: String
+
+    static let catalog: [ElevenLabsVoice] = [
+        ElevenLabsVoice(id: "pNInz6obpgDQGcFmaJgB", name: "Adam", description: "Deep, narrative, steady"),
+        ElevenLabsVoice(id: "29vD33N1CtxCmqQRPOHJ", name: "Drew", description: "Friendly, warm"),
+        ElevenLabsVoice(id: "MF3mGyEYCl7XYWbV9V6O", name: "Emily", description: "Soft, calm"),
+        ElevenLabsVoice(id: "IKne3meq5aSn9XLyUdCD", name: "Chad", description: "Confident, energetic"),
+        ElevenLabsVoice(id: "ThT5KcBeYPX3keUQqHPh", name: "Dorothy", description: "Warm, British"),
+        ElevenLabsVoice(id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah", description: "Soft, expressive"),
+        ElevenLabsVoice(id: "jBpfuIE2acCO8z3wKNLl", name: "Gigi", description: "Young, playful"),
+        ElevenLabsVoice(id: "onwK4e9ZLuTAKqWW03F9", name: "Daniel", description: "Authoritative, British"),
+    ]
+}
+
 // MARK: - Voice Info Model
 
 struct VoiceInfo: Identifiable, Hashable {
@@ -81,14 +100,22 @@ final class TTSService: NSObject, ObservableObject {
         synthesizer.delegate = self
     }
 
-    /// Speak the given text aloud. Uses Piper neural TTS if available, falls back to Apple TTS.
-    func speak(_ text: String, rate: Float = 0.50, voiceIdentifier: String = "") {
+    private var elevenLabsTask: Task<Void, Never>?
+
+    /// Speak the given text aloud.
+    /// When engine is "elevenlabs" and a valid API key exists, uses ElevenLabs Flash v2.5.
+    /// Otherwise uses Piper neural TTS if available, then falls back to Apple TTS.
+    func speak(_ text: String, rate: Float = 0.50, voiceIdentifier: String = "", engine: String = "apple", elevenLabsVoiceID: String = "") {
         stop()
 
         let cleaned = preprocessForSpeech(text)
         guard !cleaned.isEmpty else { return }
 
-        if Self.isPiperAvailable {
+        if engine == "elevenlabs" {
+            let apiKey = APIKeyStore.load(forService: "ElevenLabs") ?? "proxy"
+            isSpeaking = true
+            speakWithElevenLabs(cleaned, apiKey: apiKey, voiceID: elevenLabsVoiceID.isEmpty ? "pNInz6obpgDQGcFmaJgB" : elevenLabsVoiceID)
+        } else if Self.isPiperAvailable {
             isSpeaking = true
             speakWithPiper(cleaned, rate: rate)
         } else {
@@ -98,6 +125,8 @@ final class TTSService: NSObject, ObservableObject {
     }
 
     func stop() {
+        elevenLabsTask?.cancel()
+        elevenLabsTask = nil
         piperProcess?.terminate()
         piperProcess = nil
         audioPlayer?.stop()
@@ -108,12 +137,85 @@ final class TTSService: NSObject, ObservableObject {
         isSpeaking = false
     }
 
-    func speakAndWait(_ text: String, rate: Float = 0.50, voiceIdentifier: String = "") async {
+    func speakAndWait(_ text: String, rate: Float = 0.50, voiceIdentifier: String = "", engine: String = "apple", elevenLabsVoiceID: String = "") async {
         await withCheckedContinuation { continuation in
             completion = {
                 continuation.resume()
             }
-            speak(text, rate: rate, voiceIdentifier: voiceIdentifier)
+            speak(text, rate: rate, voiceIdentifier: voiceIdentifier, engine: engine, elevenLabsVoiceID: elevenLabsVoiceID)
+        }
+    }
+
+    // MARK: - ElevenLabs TTS
+
+    /// The proxy URL handles the API key and voice ID server-side.
+    private static let elevenLabsProxyURL = "https://clicky-proxy.farza-0cb.workers.dev/tts"
+
+    private func speakWithElevenLabs(_ text: String, apiKey: String, voiceID: String) {
+        elevenLabsTask = Task {
+            // Try direct API first if user has their own key, otherwise use proxy
+            let useProxy = apiKey.isEmpty || apiKey == "proxy"
+            let url: URL
+            var request: URLRequest
+
+            if useProxy {
+                url = URL(string: Self.elevenLabsProxyURL)!
+                request = URLRequest(url: url)
+            } else {
+                url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceID)")!
+                request = URLRequest(url: url)
+                request.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
+            }
+
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
+            request.timeoutInterval = 30
+
+            let body: [String: Any] = [
+                "text": text,
+                "model_id": "eleven_flash_v2_5",
+                "voice_settings": ["stability": 0.5, "similarity_boost": 0.75]
+            ]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                try Task.checkCancellation()
+
+                guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                    // ElevenLabs failed — fall back to local TTS
+                    await MainActor.run {
+                        self.speakWithApple(text, rate: 0.46, voiceIdentifier: "")
+                    }
+                    return
+                }
+
+                // Write MP3 to temp file and play
+                let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("anna-elevenlabs-\(UUID().uuidString).mp3")
+                try data.write(to: tempFile)
+                try Task.checkCancellation()
+
+                await MainActor.run {
+                    guard self.isSpeaking else { return }
+                    do {
+                        self.audioPlayer = try AVAudioPlayer(contentsOf: tempFile)
+                        self.audioPlayer?.delegate = self
+                        self.audioPlayer?.play()
+                    } catch {
+                        self.isSpeaking = false
+                        self.completion?()
+                        self.completion = nil
+                    }
+                }
+            } catch is CancellationError {
+                // Cancelled — already handled by stop()
+            } catch {
+                await MainActor.run {
+                    // Network/other error — fall back to local TTS
+                    self.speakWithApple(text, rate: 0.46, voiceIdentifier: "")
+                }
+            }
         }
     }
 

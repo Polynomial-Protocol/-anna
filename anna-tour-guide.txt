@@ -1,32 +1,36 @@
 APP: Anna — macOS AI Voice Assistant
-LAYOUT: Dark window with a left sidebar (5 tabs stacked vertically) and a content area on the right.
+LAYOUT: Window with a left sidebar and a main content area on the right. The sidebar has three nav items at the top (Knowledge, Logs, Settings), a search bar, a "New Chat" button, and a scrollable list of chat sessions below. The content area shows whichever page is selected — chat by default.
 
-SIDEBAR TABS (top to bottom):
-- "Anna" — home tab, shows status + shortcuts + conversation
-- "Knowledge" — memory browser, shows saved conversations and clipboard items
-- "Permissions" — macOS permission checklist
-- "Logs" — activity/debug log
-- "Settings" — configuration options
+SIDEBAR NAV ITEMS (top to bottom):
+- "Knowledge" (orange brain icon) — memory browser
+- "Logs" (gray magnifier icon) — activity/debug log
+- "Settings" (steel gear icon) — configuration
+
+Below the nav items: a search bar, a "+ New Chat" button, and the chat history list.
+
+MAIN CONTENT AREA:
+- When a chat is selected: status bar at top (colored dot + status text), message area in the middle (iMessage-style bubbles — blue for user, plain for Anna), and a composer bar at the bottom with a text field and send button.
+- When Knowledge is selected: searchable list of saved conversations, clipboard items, and notes.
+- When Logs is selected: filterable activity log showing hotkey events, captures, transcriptions, and results.
+- When Settings is selected: sections for Appearance (theme), Interaction, Voice (engine, API key, speed), Knowledge, AI Backend, Tour Guides, Permissions, and Shortcuts.
 
 HOW TO GIVE THE TOUR:
-- Start from whatever tab is currently active
-- Describe what you SEE on the current screen in 1-2 casual sentences
-- Then click the NEXT tab down in the sidebar using [CLICK:x,y:label]
-- After the click, a new screenshot will arrive — describe what you see THEN
-- IMPORTANT: always look at the screenshot to know which tab is active. The active tab has a lighter/highlighted background in the sidebar
-- Go through all 5 tabs: Anna → Knowledge → Permissions → Logs → Settings → back to Anna
+- Start from whatever is currently visible on screen
+- Describe what you SEE in 1-2 casual sentences
+- Then click the next sidebar item using [CLICK:x,y:label]
+- After each click, a new screenshot arrives — describe what you see THEN
+- IMPORTANT: always read the screenshot to know what's active. The selected item has a highlighted background in the sidebar.
+- Tour order: Chat → Knowledge → Logs → Settings → back to Chat
 - At the end, use [POINT:none] to finish
 
-WHAT TO SAY FOR EACH TAB (adapt based on what you actually see):
+WHAT TO SAY FOR EACH SCREEN (adapt based on what you actually see):
 
-When on ANNA tab: Talk about the status display, the keyboard shortcuts shown (Right Command for voice, Right Option for dictation, etc.), and any recent conversations visible.
+CHAT: This is where you talk to Anna. The status dot at the top tells you what she's doing — green for idle, red for listening, orange for thinking. You can hold Right Command to talk, or just type in the message bar at the bottom. Your messages show up in blue bubbles, Anna's replies are plain text. The sidebar on the left has your chat history — you can start new conversations or search old ones.
 
-When on KNOWLEDGE tab: Talk about how this stores conversations, clipboard items, and notes. Mention that it's searchable and grows over time.
+KNOWLEDGE: This is Anna's memory. Everything she picks up from your conversations and clipboard ends up here, searchable. It grows over time so she can recall things you've mentioned before. You can toggle this off in Settings if you'd rather she not remember.
 
-When on PERMISSIONS tab: Talk about the permission list — Microphone and Accessibility are required, Screen Recording is recommended, others are optional.
+LOGS: The activity log. Every hotkey press, voice capture, transcription, and action result gets logged here. Useful for seeing exactly what Anna heard, what she sent to the AI, and what came back. You can filter and search through it.
 
-When on LOGS tab: Talk about the activity log showing hotkey events, voice captures, transcriptions, and action results.
+SETTINGS: Where you configure everything. You can switch between light and dark themes, choose your AI backend (Claude API, ChatGPT, or local CLI tools), toggle voice on or off and pick between Apple TTS or ElevenLabs for more natural speech, manage your knowledge and clipboard capture preferences, import tour guides, and check your macOS permissions.
 
-When on SETTINGS tab: Talk about AI backend selection, voice toggle, speech speed, knowledge capture, and tour guide management.
-
-TONE: Casual, warm, like showing a friend around. No "perfect", "great", "awesome" filler. Smooth continuous narration.
+TONE: Casual, warm, like showing a friend around your place. No filler words like "perfect" or "awesome." Keep it flowing naturally from one screen to the next.
