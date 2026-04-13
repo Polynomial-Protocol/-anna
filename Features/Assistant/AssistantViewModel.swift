@@ -25,7 +25,7 @@ final class AssistantViewModel: ObservableObject {
     private let settingsProvider: () -> AppSettings
     private let settingsUpdater: (AppSettings) -> Void
     var logger: RuntimeLogger?
-    private(set) lazy var tourAnalytics = TourAnalytics(logger: logger)
+    var tourAnalytics: TourAnalytics { TourAnalytics(logger: logger) }
 
     private var recorderReady = false
     private var pendingEnd = false
@@ -195,8 +195,14 @@ final class AssistantViewModel: ObservableObject {
                     self.lastTranscriptTime = Date()
                     // Only set tour mode from original user input, not continuation prompts
                     if !self.isInTourMode {
-                        self.isInTourMode = self.detectTourMode(from: trimmed)
-                        self.guidedModeStepCount = 0
+                        let newTourMode = self.detectTourMode(from: trimmed)
+                        if newTourMode {
+                            self.isInTourMode = true
+                            self.guidedModeStepCount = 0
+                            self.tourStartTime = Date()
+                            let settings = self.settingsProvider()
+                            self.tourAnalytics.tourStarted(tourGuideID: settings.activeTourGuideID, tourName: "Text tour")
+                        }
                     }
                     self.logger?.log("Text result: \"\(result.0)\" (tour: \(self.isInTourMode))", tag: "text")
 
@@ -350,16 +356,18 @@ final class AssistantViewModel: ObservableObject {
         }
     }
 
-    private func finishTour() {
-        let totalMs = Int((Date().timeIntervalSince(tourStartTime ?? Date())) * 1000)
-        tourAnalytics.tourCompleted(totalSteps: guidedModeStepCount, totalDurationMs: totalMs)
+    private func finishTour(logCompletion: Bool = true) {
+        if logCompletion {
+            let totalMs = Int((Date().timeIntervalSince(tourStartTime ?? Date())) * 1000)
+            tourAnalytics.tourCompleted(totalSteps: guidedModeStepCount, totalDurationMs: totalMs)
+        }
         self.guidedModeStepCount = 0
         self.isInTourMode = false
         self.tourStartTime = nil
         self.pointerOverlayManager.hide()
         self.status = .idle
         self.statusLine = "All done — I'm here if you need me."
-        self.logger?.log("Guided tour completed", tag: "guide")
+        self.logger?.log("Guided tour finished", tag: "guide")
     }
 
     private func continueGuidedWalkthrough() {
@@ -441,7 +449,7 @@ final class AssistantViewModel: ObservableObject {
         ttsService.stop()
         let totalMs = Int((Date().timeIntervalSince(tourStartTime ?? Date())) * 1000)
         tourAnalytics.tourAbandoned(stepIndex: guidedModeStepCount, reason: "user_stopped", totalDurationMs: totalMs)
-        finishTour()
+        finishTour(logCompletion: false)
         logger?.log("Tour stopped by user", tag: "guide")
     }
 

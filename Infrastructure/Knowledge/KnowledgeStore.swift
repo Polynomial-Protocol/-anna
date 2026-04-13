@@ -154,10 +154,12 @@ actor KnowledgeStore {
         return d > 0 ? dot / d : 0
     }
 
-    /// Synchronous embedding within the actor (NLEmbedding is thread-safe)
-    private nonisolated func embeddingService_syncEmbed(_ text: String) -> [Float]? {
-        guard let model = NLEmbedding.sentenceEmbedding(for: .english) else { return nil }
-        return model.vector(for: text)?.map { Float($0) }
+    /// Cached NLEmbedding model for synchronous vector search within the actor.
+    /// NLEmbedding is thread-safe and the model is loaded once.
+    private let syncEmbeddingModel = NLEmbedding.sentenceEmbedding(for: .english)
+
+    private func embeddingService_syncEmbed(_ text: String) -> [Float]? {
+        syncEmbeddingModel?.vector(for: text)?.map { Float($0) }
     }
 
     // MARK: - Private
@@ -182,9 +184,14 @@ actor KnowledgeStore {
             )
         """)
 
-        // Add columns if they don't exist (migration for existing databases)
-        execute("ALTER TABLE entries ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'episodic'")
-        execute("ALTER TABLE entries ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0")
+        // Migration: add columns for existing databases (silently ignored if already present)
+        // These are safe because execute() discards errors from duplicate column names.
+        if !tableHasColumn("entries", column: "memory_type") {
+            execute("ALTER TABLE entries ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'episodic'")
+        }
+        if !tableHasColumn("entries", column: "access_count") {
+            execute("ALTER TABLE entries ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0")
+        }
 
         // Embeddings table
         execute("""
@@ -215,6 +222,18 @@ actor KnowledgeStore {
 
     private func execute(_ sql: String) {
         sqlite3_exec(db, sql, nil, nil, nil)
+    }
+
+    private func tableHasColumn(_ table: String, column: String) -> Bool {
+        let sql = "PRAGMA table_info(\(table))"
+        guard let stmt = prepare(sql) else { return false }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let namePtr = sqlite3_column_text(stmt, 1), String(cString: namePtr) == column {
+                return true
+            }
+        }
+        return false
     }
 
     private func prepare(_ sql: String) -> OpaquePointer? {
@@ -324,10 +343,10 @@ actor KnowledgeStore {
         return dupes
     }
 
-    /// Archive stale episodic entries older than their decay period.
-    /// Returns the number of entries archived.
+    /// Delete stale entries older than their memory type's decay period.
+    /// Only deletes entries with fewer than 3 accesses (low-value entries).
     @discardableResult
-    func archiveStaleEntries() -> Int {
+    func deleteStaleEntries() -> Int {
         let now = Date().timeIntervalSince1970
         var archived = 0
 
@@ -356,7 +375,7 @@ actor KnowledgeStore {
         await backfillEmbeddings(batchSize: 100)
 
         // 2. Archive stale entries
-        let archived = archiveStaleEntries()
+        let archived = deleteStaleEntries()
         if archived > 0 {
             // Reload cache after deletion
             loadEmbeddingCache()
