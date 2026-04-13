@@ -228,63 +228,60 @@ final class AssistantViewModel: ObservableObject {
     private let maxGuidedSteps = 8
 
     private func handlePointerAndSpeak(pointer: PointerCoordinate?, responseText: String) {
+        let isClick = pointer?.action == .click
+        let clickLocation = isClick ? pointer.flatMap { PointerOverlayManager.screenLocation(for: $0) } : nil
+
+        // Step 1: Fly buddy to target
         if let pointer = pointer {
             self.pointerOverlayManager.pointAt(pointer)
-
-            let isClick = pointer.action == .click
-            let clickLocation = isClick ? PointerOverlayManager.screenLocation(for: pointer) : nil
-
-            // Fly to target, then click after the flight animation settles
-            let flightDuration: Double = 1.5
-            if isClick, let loc = clickLocation {
-                DispatchQueue.main.asyncAfter(deadline: .now() + flightDuration) {
-                    self.pointerOverlayManager.clickRippleAt = loc
-                    ClickSimulator.click(at: loc)
-                    self.logger?.log("Guided click at (\(Int(loc.x)), \(Int(loc.y))): \(pointer.label ?? "element")", tag: "guide")
-                }
-            }
-
-            // Hide pointer after flight + dwell
-            let hideDelay: Double = isClick ? flightDuration + 2.0 : 6.0
-            DispatchQueue.main.asyncAfter(deadline: .now() + hideDelay) {
-                self.pointerOverlayManager.hide()
-            }
-
-            // For CLICK actions: auto-continue the guided walkthrough
-            if isClick {
-                self.guidedModeStepCount += 1
-                if self.guidedModeStepCount < self.maxGuidedSteps {
-                    let continueDelay = flightDuration + 2.5
-                    DispatchQueue.main.asyncAfter(deadline: .now() + continueDelay) {
-                        self.continueGuidedWalkthrough()
-                    }
-                } else {
-                    self.guidedModeStepCount = 0
-                }
-            } else {
-                self.guidedModeStepCount = 0
-            }
         }
 
-        // Speak the response
+        // Step 2: Speak, then sequence click and continuation AFTER speech ends
         let settings = self.settingsProvider()
         if settings.ttsEnabled {
             self.status = .speaking
             self.ttsService.speak(responseText, rate: settings.ttsRate, voiceIdentifier: settings.ttsVoiceIdentifier)
-            Task {
+        }
+
+        Task {
+            // Wait for TTS to finish before doing anything else
+            if settings.ttsEnabled {
                 while self.ttsService.isSpeaking {
                     try? await Task.sleep(nanoseconds: 200_000_000)
                 }
-                await MainActor.run {
-                    if self.status == .speaking {
+            }
+
+            await MainActor.run {
+                if isClick, let loc = clickLocation {
+                    // Step 3: Click AFTER speech finishes
+                    self.pointerOverlayManager.clickRippleAt = loc
+                    ClickSimulator.click(at: loc)
+                    self.logger?.log("Guided click at (\(Int(loc.x)), \(Int(loc.y))): \(pointer?.label ?? "element")", tag: "guide")
+
+                    // Step 4: Hide pointer
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        self.pointerOverlayManager.hide()
+                    }
+
+                    // Step 5: Wait for UI to settle, then continue tour
+                    self.guidedModeStepCount += 1
+                    if self.guidedModeStepCount < self.maxGuidedSteps {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self.continueGuidedWalkthrough()
+                        }
+                    } else {
+                        self.guidedModeStepCount = 0
                         self.status = .idle
                         self.statusLine = "All done — I'm here if you need me."
                     }
+                } else {
+                    // No click — just finish
+                    self.guidedModeStepCount = 0
+                    self.pointerOverlayManager.hide()
+                    self.status = .idle
+                    self.statusLine = "All done — I'm here if you need me."
                 }
             }
-        } else if pointer?.action != .click {
-            self.status = .idle
-            self.statusLine = "All done — I'm here if you need me."
         }
     }
 
@@ -296,7 +293,7 @@ final class AssistantViewModel: ObservableObject {
 
         Task {
             do {
-                let result = try await engine.executeText("I just clicked that. Look at the new screenshot — describe what's on screen now in 1-2 sentences, then use [CLICK:x,y:label] to navigate to the next thing in the tour. ONE step only. No filler words.")
+                let result = try await engine.executeText("The click happened and the UI updated. Look at the screenshot — which tab or screen is active NOW? Describe what you SEE in 1-2 sentences, then click the next thing in the tour using [CLICK:x,y:label]. Only describe what is CURRENTLY visible, not what was there before.")
                 await MainActor.run {
                     self.lastTranscript = "Guided walkthrough (step \(self.guidedModeStepCount + 1))"
                     self.lastTranscriptTime = Date()
