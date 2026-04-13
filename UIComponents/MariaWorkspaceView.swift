@@ -79,26 +79,29 @@ struct AnnaWorkspaceView: View {
     }
 
     private func sidebarItem(_ page: SidebarPage) -> some View {
-        Button {
+        let isSelected = selectedPage == page
+        return Button {
             withAnimation(.easeInOut(duration: 0.2)) { selectedPage = page }
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 Image(systemName: page.icon)
-                    .font(.system(size: 11))
-                    .frame(width: 16)
+                    .font(.system(size: 12))
+                    .frame(width: 18)
                 Text(page.rawValue)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
                 Spacer()
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                selectedPage == page
-                    ? Color.white.opacity(0.05)
+                isSelected
+                    ? Color.white.opacity(0.1)
                     : Color.clear,
-                in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
             )
-            .foregroundStyle(selectedPage == page ? .white.opacity(0.75) : .white.opacity(0.35))
+            .foregroundStyle(isSelected ? .white.opacity(0.85) : .white.opacity(0.4))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
     }
