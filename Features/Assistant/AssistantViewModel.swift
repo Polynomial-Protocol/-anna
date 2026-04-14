@@ -248,8 +248,9 @@ final class AssistantViewModel: ObservableObject {
     // MARK: - Pointer, Click & Guided Mode
 
     private var guidedModeStepCount = 0
-    /// Hard safety cap to prevent infinite loops if Claude keeps going. Claude decides when to stop via [POINT:none].
-    private let maxGuidedSteps = 25
+    /// Hard safety cap against infinite loops — matches the conversation session turn limit (100 turns ≈ 50 steps).
+    /// In practice Claude ends tours via [POINT:none] well before hitting this.
+    private let maxGuidedSteps = 50
     @Published var isInTourMode = false
     /// Stores the user's original tour request so continuation prompts can preserve the user's intent (basic vs complete).
     private var tourOriginalRequest: String = ""
