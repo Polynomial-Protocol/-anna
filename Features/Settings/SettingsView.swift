@@ -445,6 +445,12 @@ struct SettingsView: View {
             loadAPIKey(for: provider)
             elevenLabsKeyText = APIKeyStore.load(forService: "ElevenLabs") ?? ""
             Task { await refreshTourGuides() }
+            // Start polling permissions so UI updates live when user grants/revokes in System Settings
+            permissionsViewModel?.refresh()
+            permissionsViewModel?.startPolling()
+        }
+        .onDisappear {
+            permissionsViewModel?.stopPolling()
         }
     }
 
@@ -581,78 +587,115 @@ struct SettingsView: View {
     }
 
     private func permissionRow(_ status: PermissionStatus, viewModel pvm: PermissionsViewModel) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: status.kind.icon)
-                .font(.system(size: 12))
-                .foregroundStyle(permissionColor(status).opacity(0.7))
-                .frame(width: 16)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: status.kind.icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(permissionColor(status).opacity(0.7))
+                    .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(status.kind.displayName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary.opacity(0.7))
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(status.kind.displayName)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.7))
 
-                    if status.kind.isRequired {
-                        Text("Required")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color(hex: "FFC764").opacity(0.7))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color(hex: "FFC764").opacity(0.08), in: Capsule())
+                        if status.kind.isRequired {
+                            Text("Required")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color(hex: "FFC764").opacity(0.7))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color(hex: "FFC764").opacity(0.08), in: Capsule())
+                        }
                     }
+
+                    Text(status.kind.reason)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.primary.opacity(0.25))
+                        .lineLimit(2)
                 }
 
-                Text(status.kind.reason)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.primary.opacity(0.25))
-                    .lineLimit(2)
+                Spacer()
 
-                if status.needsAttention {
-                    Text(status.kind.denialInstructions)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.primary.opacity(0.3))
-                        .padding(.top, 2)
+                // Status badge / action
+                switch status.state {
+                case .granted:
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 9))
+                        Text("Granted").font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(Color(hex: "69D3B0"))
+
+                case .notRequested:
+                    Button {
+                        pvm.request(status.kind)
+                    } label: {
+                        Text("Grant")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.6))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(.primary.opacity(0.08), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                case .denied:
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 9))
+                        Text("Denied").font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(.red.opacity(0.7))
+
+                case .manualStepRequired:
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.circle.fill").font(.system(size: 9))
+                        Text("Action needed").font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(Color(hex: "FFC764").opacity(0.8))
                 }
             }
 
-            Spacer()
+            // Recovery instructions + action buttons when permission needs attention
+            if status.needsAttention {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(status.kind.denialInstructions)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.primary.opacity(0.35))
+                        .fixedSize(horizontal: false, vertical: true)
 
-            // Status badge / action
-            switch status.state {
-            case .granted:
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 9))
-                    Text("Granted").font(.system(size: 10, weight: .medium))
-                }
-                .foregroundStyle(Color(hex: "69D3B0"))
+                    HStack(spacing: 8) {
+                        Button {
+                            pvm.request(status.kind)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise").font(.system(size: 9))
+                                Text("Retry").font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundStyle(.primary.opacity(0.6))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(.primary.opacity(0.08), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
 
-            case .notRequested:
-                Button {
-                    pvm.request(status.kind)
-                } label: {
-                    Text("Grant")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.primary.opacity(0.6))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .background(.primary.opacity(0.08), in: Capsule())
+                        Button {
+                            pvm.openSettings(for: status.kind)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "gear").font(.system(size: 9))
+                                Text("Open System Settings").font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundStyle(.primary.opacity(0.6))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(.primary.opacity(0.08), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
-
-            case .denied:
-                HStack(spacing: 4) {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 9))
-                    Text("Denied").font(.system(size: 10, weight: .medium))
-                }
-                .foregroundStyle(.red.opacity(0.7))
-
-            case .manualStepRequired:
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.circle.fill").font(.system(size: 9))
-                    Text("Action needed").font(.system(size: 10, weight: .medium))
-                }
-                .foregroundStyle(Color(hex: "FFC764").opacity(0.8))
+                .padding(.top, 6)
+                .padding(.leading, 26)
             }
         }
     }

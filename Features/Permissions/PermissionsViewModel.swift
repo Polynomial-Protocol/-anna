@@ -20,6 +20,8 @@ final class PermissionsViewModel: ObservableObject {
         statuses.filter(\.needsAttention)
     }
 
+    private var pollTimer: Timer?
+
     init(permissionService: PermissionService) {
         self.permissionService = permissionService
         self.statuses = permissionService.currentStatuses()
@@ -27,7 +29,24 @@ final class PermissionsViewModel: ObservableObject {
     }
 
     func refresh() {
-        statuses = permissionService.refresh()
+        let fresh = permissionService.refresh()
+        // Only reassign if something changed to avoid unnecessary view updates
+        if fresh != statuses {
+            statuses = fresh
+        }
+    }
+
+    /// Start polling for permission changes every 1.5s. Call from onAppear of the Settings view.
+    func startPolling() {
+        stopPolling()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
+
+    func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
     }
 
     func request(_ kind: PermissionKind) {

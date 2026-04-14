@@ -126,14 +126,14 @@ enum PermissionKind: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum PermissionState: String, Sendable {
+enum PermissionState: String, Sendable, Equatable {
     case notRequested
     case granted
     case denied
     case manualStepRequired
 }
 
-struct PermissionStatus: Identifiable, Sendable {
+struct PermissionStatus: Identifiable, Sendable, Equatable {
     let kind: PermissionKind
     var state: PermissionState
     var detail: String
