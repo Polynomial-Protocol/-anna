@@ -246,7 +246,8 @@ final class AssistantViewModel: ObservableObject {
     // MARK: - Pointer, Click & Guided Mode
 
     private var guidedModeStepCount = 0
-    private let maxGuidedSteps = 8
+    private let maxGuidedSteps = 15
+    private let minStepsBeforeEnd = 5
     @Published var isInTourMode = false
 
     private static let tourKeywords = [
@@ -324,11 +325,14 @@ final class AssistantViewModel: ObservableObject {
                         self.statusLine = "All done — I'm here if you need me."
                     }
 
-                } else if isTourEnd {
-                    // Explicit tour end: [POINT:none]
+                } else if isTourEnd && (self.isInTourMode == false || self.guidedModeStepCount >= self.minStepsBeforeEnd) {
+                    // Explicit tour end: [POINT:none] — but only honor it after min steps during a tour
+                    // This prevents Claude from prematurely ending after 2-3 steps.
                     self.finishTour()
 
                 } else if self.isInTourMode {
+                    // Either no pointer, or a POINT (not CLICK), or a premature [POINT:none]
+                    // Keep tour alive — Claude should continue
                     // Mid-tour response without a click (e.g., POINT action or description-only)
                     // Keep tour alive and continue to next step
                     self.guidedModeStepCount += 1
@@ -383,7 +387,8 @@ final class AssistantViewModel: ObservableObject {
 
         Task {
             do {
-                let result = try await engine.executeInternalText("The click happened. Look at the NEW screenshot carefully. If the screen looks the same as before (the click didn't work), say so briefly and try clicking a slightly different spot. Otherwise, describe what you SEE in 1-2 short sentences, then click the next element using [CLICK:x,y:label]. Guide through whatever app is visible — do NOT switch apps. If the tour is done, wrap up briefly and use [POINT:none].")
+                let stepNum = self.guidedModeStepCount + 1
+                let result = try await engine.executeInternalText("The click happened (step \(stepNum)). Look at the NEW screenshot. If it looks the same as before, the click didn't work — say so briefly and try clicking a slightly different spot. Otherwise, describe what you SEE in 1-2 short sentences, then click the NEXT element using [CLICK:x,y:label]. Keep going — continue the tour, do not end it yet. Guide through whatever app is visible — do NOT switch apps. Only use [POINT:none] to end the tour if you have thoroughly covered all the major features (at least 6-8 steps).")
                 await MainActor.run {
                     self.lastTranscript = "Guided walkthrough (step \(self.guidedModeStepCount + 1))"
                     self.lastTranscriptTime = Date()
