@@ -188,6 +188,16 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                section("Tutoring") {
+                    toggle("Tutor mode — proactively guide me as I work", $viewModel.settings.tutorModeEnabled)
+                    toggle("Look at the active window only", $viewModel.settings.focusedWindowCaptureEnabled)
+                    toggle("Auto-copy what Anna says to clipboard", $viewModel.settings.autoCopyResponsesEnabled)
+                    Text("Tutor mode watches for 3s of inactivity and offers the next step. Window-only capture hides other apps from Anna.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.primary.opacity(0.25))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 section("AI Backend") {
                     // Provider picker
                     VStack(alignment: .leading, spacing: 6) {
@@ -263,9 +273,14 @@ struct SettingsView: View {
                                 .foregroundStyle(Color(hex: "69D3B0").opacity(0.7))
                             }
 
-                            Text(selectedProvider == .anthropic
-                                ? "Get your API key at console.anthropic.com"
-                                : "Get your API key at platform.openai.com")
+                            Text({
+                                switch selectedProvider {
+                                case .anthropic: return "Get your API key at console.anthropic.com"
+                                case .openai: return "Get your API key at platform.openai.com"
+                                case .openrouter: return "Get your API key at openrouter.ai/keys — routes to Claude via anthropic/claude-sonnet-4.5"
+                                default: return ""
+                                }
+                            }())
                                 .font(.system(size: 10))
                                 .foregroundStyle(.primary.opacity(0.25))
                         }

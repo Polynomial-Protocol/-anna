@@ -5,11 +5,12 @@ import AppKit
 enum AIProvider: String, CaseIterable, Codable, Sendable {
     case anthropic = "Claude API"
     case openai = "ChatGPT API"
+    case openrouter = "OpenRouter"
     case claudeCLI = "Claude Code CLI"
     case codexCLI = "Codex CLI"
 
     var isAPI: Bool {
-        self == .anthropic || self == .openai
+        self == .anthropic || self == .openai || self == .openrouter
     }
 
     var isCLI: Bool {
@@ -51,7 +52,7 @@ actor AIAPIService {
                 conversationContext: conversationContext,
                 startTime: startTime
             )
-        case .openai:
+        case .openai, .openrouter:
             return try await callOpenAI(
                 request: userRequest,
                 screenshotPath: screenshotPath,
@@ -129,7 +130,7 @@ actor AIAPIService {
         ]
 
         let body: [String: Any] = [
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5",
             "max_tokens": 1024,
             "system": systemPrompt,
             "tools": tools,
@@ -143,7 +144,7 @@ actor AIAPIService {
 
     /// Handles the Anthropic tool-use loop: send request → get tool calls → execute → send results → get final response
     private func executeAnthropicWithTools(url: URL, body: [String: Any], startTime: Date, depth: Int = 0) async throws -> ClaudeCLIResult {
-        guard depth < 5 else {
+        guard depth < 10 else {
             return ClaudeCLIResult(text: "Done.", success: true, costUSD: nil,
                                   durationMs: Int(Date().timeIntervalSince(startTime) * 1000))
         }
@@ -170,6 +171,14 @@ actor AIAPIService {
             }
             if httpResponse.statusCode == 429 {
                 throw AnnaError.claudeCLIFailed("Rate limited. Please wait a moment and try again.")
+            }
+            // Anthropic returns 529 for overload; sometimes 404 with message "Overloaded" during capacity spikes.
+            let isOverloaded = httpResponse.statusCode == 529
+                || (httpResponse.statusCode == 404 && errorBody.lowercased().contains("overloaded"))
+            if isOverloaded && depth < 8 {
+                let backoff = UInt64(pow(2.0, Double(depth))) * 500_000_000  // 0.5s, 1s, 2s, 4s...
+                try? await Task.sleep(nanoseconds: backoff)
+                return try await executeAnthropicWithTools(url: url, body: body, startTime: startTime, depth: depth + 1)
             }
             throw AnnaError.claudeCLIFailed("Anthropic API error (\(httpResponse.statusCode)): \(errorBody.prefix(200))")
         }
@@ -238,7 +247,9 @@ actor AIAPIService {
         conversationContext: String?,
         startTime: Date
     ) async throws -> ClaudeCLIResult {
-        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+        let url = URL(string: provider == .openrouter
+            ? "https://openrouter.ai/api/v1/chat/completions"
+            : "https://api.openai.com/v1/chat/completions")!
 
         // Build user message content
         var userContent: [[String: Any]] = []
@@ -290,7 +301,7 @@ actor AIAPIService {
         ]
 
         let body: [String: Any] = [
-            "model": "gpt-4o",
+            "model": provider == .openrouter ? "anthropic/claude-sonnet-4.5" : "gpt-4o",
             "max_tokens": 1024,
             "tools": tools,
             "messages": [
@@ -303,7 +314,7 @@ actor AIAPIService {
     }
 
     private func executeOpenAIWithTools(url: URL, body: [String: Any], startTime: Date, depth: Int = 0) async throws -> ClaudeCLIResult {
-        guard depth < 5 else {
+        guard depth < 10 else {
             return ClaudeCLIResult(text: "Done.", success: true, costUSD: nil,
                                   durationMs: Int(Date().timeIntervalSince(startTime) * 1000))
         }
@@ -325,7 +336,8 @@ actor AIAPIService {
         guard httpResponse.statusCode == 200 else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
             if httpResponse.statusCode == 401 {
-                throw AnnaError.claudeCLIFailed("Invalid OpenAI API key. Check your key in Settings.")
+                let name = provider == .openrouter ? "OpenRouter" : "OpenAI"
+                throw AnnaError.claudeCLIFailed("Invalid \(name) API key. Check your key in Settings.")
             }
             if httpResponse.statusCode == 429 {
                 throw AnnaError.claudeCLIFailed("Rate limited. Please wait a moment and try again.")

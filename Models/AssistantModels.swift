@@ -180,6 +180,9 @@ struct AppSettings: Codable, Sendable {
     var aiProvider: String = AIProvider.anthropic.rawValue
     var activeTourGuideID: String = ""
     var appTheme: String = "system" // "light", "dark", "system"
+    var tutorModeEnabled: Bool = false
+    var autoCopyResponsesEnabled: Bool = false
+    var focusedWindowCaptureEnabled: Bool = false
 
     static let defaultValue = AppSettings()
 

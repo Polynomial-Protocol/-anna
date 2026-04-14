@@ -144,11 +144,27 @@ actor AssistantEngine {
 
     // MARK: - Agent Execution (shared by voice and text paths)
 
-    private func executeAgent(request: String, transcript: String, isInternal: Bool = false) async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
+    /// Runs a proactive tutor observation — capture focused window, ask the model to
+    /// guide the user's next step based on what it sees and prior conversation history.
+    func executeTutorObservation() async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
+        let prompt = "[tutor observation] Look at the screen. The user is actively using this app and just paused. Proactively guide them to the next useful step — one short action, like an instructor would. Check prior conversation history so you don't repeat yourself. If there's a specific UI element to interact with, point at it with [POINT:x,y:label]. If nothing meaningful to say, respond with just [POINT:none]."
+        let tier = IntentRouter.route(prompt)
+        switch tier {
+        case .direct(let action):
+            let outcome = try await directExecutor.execute(action)
+            return (prompt, outcome, nil)
+        case .agent(let request):
+            return try await executeAgent(request: request, transcript: prompt, isInternal: true, useFocusedWindow: true)
+        }
+    }
+
+    private func executeAgent(request: String, transcript: String, isInternal: Bool = false, useFocusedWindow: Bool = false) async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
         // Exclude Anna's own window from screenshot when touring non-Anna apps
         let settings = settingsProvider()
         let hasExternalTourGuide = !settings.activeTourGuideID.isEmpty
         await MainActor.run { screenCaptureService.excludeAnnaWindow = hasExternalTourGuide }
+
+        let preferFocusedWindow = useFocusedWindow || settings.focusedWindowCaptureEnabled
 
         // Capture screenshot — track both pixel dimensions and display point dimensions
         var screenshotPath: String? = nil
@@ -159,7 +175,9 @@ actor AssistantEngine {
         var screenshotUnavailableReason: String? = nil
 
         do {
-            let capture = try await screenCaptureService.captureToFile()
+            let capture = preferFocusedWindow
+                ? try await screenCaptureService.captureFocusedWindowToFile()
+                : try await screenCaptureService.captureToFile()
             screenshotPath = capture.url.path
             screenshotPixelWidth = capture.widthPixels
             screenshotPixelHeight = capture.heightPixels

@@ -205,7 +205,11 @@ struct BuddyCursorView: View {
                     .fixedSize()
                     .scaleEffect(navBubbleScale)
                     .opacity(navBubbleOpacity)
-                    .position(x: cursorPosition.x + 10 + (navBubbleSize.width / 2), y: cursorPosition.y + 18)
+                    .position(
+                        x: min(max(cursorPosition.x, navBubbleSize.width / 2 + 8),
+                               screenFrame.width - navBubbleSize.width / 2 - 8),
+                        y: cursorPosition.y + 22 + navBubbleSize.height / 2
+                    )
                     .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                     .animation(.spring(response: 0.4, dampingFraction: 0.6), value: navBubbleScale)
                     .overlay(
@@ -419,12 +423,13 @@ struct BuddyCursorView: View {
         let phrase = overlayManager.detectedElementLabel ?? pointerPhrases.randomElement() ?? "right here!"
 
         streamBubble(phrase: phrase, index: 0) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            // Stay anchored at the target. Fade the label after a moment, but the cursor
+            // remains here until (a) a new pointAt moves it to the next element, or
+            // (b) the task fully completes and the overlay hides.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                 guard self.buddyMode == .pointingAtTarget else { return }
-                self.navBubbleOpacity = 0.0
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    guard self.buddyMode == .pointingAtTarget else { return }
-                    self.flyBackToCursor()
+                withAnimation(.easeOut(duration: 0.4)) {
+                    self.navBubbleOpacity = 0.0
                 }
             }
         }

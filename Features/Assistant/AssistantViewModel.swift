@@ -1,4 +1,6 @@
 import SwiftUI
+import Combine
+import AppKit
 
 @MainActor
 final class AssistantViewModel: ObservableObject {
@@ -31,6 +33,11 @@ final class AssistantViewModel: ObservableObject {
     private var pendingEnd = false
     private var tourStartTime: Date?
 
+    // Tutor mode (idle-triggered proactive observations)
+    private let idleDetector = UserActivityIdleDetector()
+    private var idleCancellable: AnyCancellable?
+    private var isTutorObservationInFlight = false
+
     init(
         engine: AssistantEngine,
         permissionService: PermissionService,
@@ -45,6 +52,82 @@ final class AssistantViewModel: ObservableObject {
         self.pointerOverlayManager = pointerOverlayManager
         self.settingsProvider = settingsProvider
         self.settingsUpdater = settingsUpdater
+
+        // Idle detector runs continuously — the trigger handler gates on the setting.
+        idleDetector.start()
+        idleCancellable = idleDetector.$isUserIdle
+            .filter { $0 == true }
+            .sink { [weak self] _ in
+                self?.handleIdleTrigger()
+            }
+    }
+
+    // MARK: - Tutor Mode
+
+    private func handleIdleTrigger() {
+        // Guards: no overlap with any active user-driven flow.
+        guard settingsProvider().tutorModeEnabled,
+              !isCapturing,
+              status == .idle,
+              !ttsService.isSpeaking,
+              !isInTourMode,
+              !isTutorObservationInFlight else { return }
+
+        isTutorObservationInFlight = true
+        status = .thinking
+        statusLine = "Taking a look..."
+        logger?.log("Tutor idle trigger — running observation", tag: "tutor")
+
+        Task {
+            defer {
+                self.idleDetector.observationDidComplete()
+                self.isTutorObservationInFlight = false
+            }
+            do {
+                let result = try await engine.executeTutorObservation()
+                await MainActor.run {
+                    guard let outcome = result.1 else {
+                        self.status = .idle
+                        self.statusLine = "I'm right here — hold Right ⌘ to talk."
+                        return
+                    }
+                    let responseText: String
+                    switch outcome {
+                    case .completed(let summary, _): responseText = summary
+                    case .needsConfirmation(let summary): responseText = summary
+                    case .blocked(let summary): responseText = summary
+                    }
+                    // Skip pure [POINT:none] "nothing to say" observations silently.
+                    let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.isEmpty {
+                        self.status = .idle
+                        self.statusLine = "I'm right here — hold Right ⌘ to talk."
+                        return
+                    }
+                    self.lastResponseTime = Date()
+                    let cleanText = self.ingestPlanFromResponse(responseText)
+                    self.animateStreamingText(cleanText)
+                    self.copyResponseIfEnabled(cleanText)
+                    self.handlePointerAndSpeak(pointer: result.2, responseText: cleanText)
+                }
+            } catch {
+                await MainActor.run {
+                    self.status = .idle
+                    self.statusLine = "I'm right here — hold Right ⌘ to talk."
+                    self.logger?.log("Tutor observation error: \(error.localizedDescription)", tag: "tutor")
+                }
+            }
+        }
+    }
+
+    // MARK: - Auto-copy
+
+    private func copyResponseIfEnabled(_ text: String) {
+        guard settingsProvider().autoCopyResponsesEnabled else { return }
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(clean, forType: .string)
     }
 
     /// Whether Anna paused media when starting capture — so we know whether to resume afterward.
@@ -132,16 +215,21 @@ final class AssistantViewModel: ObservableObject {
                     self.recorderReady = false
                     self.lastTranscript = result.0
                     self.lastTranscriptTime = Date()
-                    let wasTourMode = self.isInTourMode
-                    self.isInTourMode = self.detectTourMode(from: result.0)
+                    // Every new user request starts a fresh task. Task mode stays on until
+                    // the model emits [POINT:none] (done marker) or the safety cap trips.
+                    self.isInTourMode = true
                     self.guidedModeStepCount = 0
-                    if self.isInTourMode && !wasTourMode {
-                        self.tourStartTime = Date()
-                        self.tourOriginalRequest = result.0
-                        let settings = self.settingsProvider()
-                        self.tourAnalytics.tourStarted(tourGuideID: settings.activeTourGuideID, tourName: "Voice tour")
-                    }
-                    self.logger?.log("Transcription: \"\(result.0)\" (tour: \(self.isInTourMode))", tag: "voice")
+                    self.tourStartTime = Date()
+                    self.tourOriginalRequest = result.0
+                    self.taskIntent = Self.detectIntent(from: result.0)
+                    self.teachSamePointerStreak = 0
+                    self.lastTeachPointerKey = ""
+                    self.cachedPlan = ""
+                    self.cachedPlanStepCount = 0
+                    self.continuationFailures = 0
+                    let settings = self.settingsProvider()
+                    self.tourAnalytics.tourStarted(tourGuideID: settings.activeTourGuideID, tourName: "Voice task")
+                    self.logger?.log("Transcription: \"\(result.0)\" (intent: \(self.taskIntent))", tag: "voice")
 
                     if let outcome = result.1 {
                         let responseText: String
@@ -162,10 +250,12 @@ final class AssistantViewModel: ObservableObject {
 
                         // Record response time and show streaming text effect
                         self.lastResponseTime = Date()
-                        self.animateStreamingText(responseText)
+                        let cleanText = self.ingestPlanFromResponse(responseText)
+                        self.animateStreamingText(cleanText)
+                        self.copyResponseIfEnabled(cleanText)
 
                         // Handle pointer/click and TTS
-                        self.handlePointerAndSpeak(pointer: result.2, responseText: responseText)
+                        self.handlePointerAndSpeak(pointer: result.2, responseText: cleanText)
                     } else {
                         self.status = .idle
                         self.statusLine = "All done — I'm here if you need me."
@@ -218,19 +308,20 @@ final class AssistantViewModel: ObservableObject {
                     self.isCapturing = false
                     self.lastTranscript = result.0
                     self.lastTranscriptTime = Date()
-                    // Only set tour mode from original user input, not continuation prompts
-                    if !self.isInTourMode {
-                        let newTourMode = self.detectTourMode(from: trimmed)
-                        if newTourMode {
-                            self.isInTourMode = true
-                            self.guidedModeStepCount = 0
-                            self.tourStartTime = Date()
-                            self.tourOriginalRequest = trimmed
-                            let settings = self.settingsProvider()
-                            self.tourAnalytics.tourStarted(tourGuideID: settings.activeTourGuideID, tourName: "Text tour")
-                        }
-                    }
-                    self.logger?.log("Text result: \"\(result.0)\" (tour: \(self.isInTourMode))", tag: "text")
+                    // Fresh text input starts a new task.
+                    self.isInTourMode = true
+                    self.guidedModeStepCount = 0
+                    self.tourStartTime = Date()
+                    self.tourOriginalRequest = trimmed
+                    self.taskIntent = Self.detectIntent(from: trimmed)
+                    self.teachSamePointerStreak = 0
+                    self.lastTeachPointerKey = ""
+                    self.cachedPlan = ""
+                    self.cachedPlanStepCount = 0
+                    self.continuationFailures = 0
+                    let settings = self.settingsProvider()
+                    self.tourAnalytics.tourStarted(tourGuideID: settings.activeTourGuideID, tourName: "Text task")
+                    self.logger?.log("Text result: \"\(result.0)\" (intent: \(self.taskIntent))", tag: "text")
 
                     if let outcome = result.1 {
                         let responseText: String
@@ -279,21 +370,82 @@ final class AssistantViewModel: ObservableObject {
     /// Stores the user's original tour request so continuation prompts can preserve the user's intent (basic vs complete).
     private var tourOriginalRequest: String = ""
 
-    private static let tourKeywords = [
-        "tour", "walk me through", "walkthrough", "walk through",
-        "show me everything", "show me around", "demo", "guide me",
-        "give me a tour", "all the tabs", "all the features",
-        "show me all", "explain the app", "explain anna"
-    ]
-
-    private func detectTourMode(from text: String) -> Bool {
-        let lower = text.lowercased()
-        return Self.tourKeywords.contains { lower.contains($0) }
+    /// Plan emitted by the model on turn 1 as "[PLAN: step1 → step2 → step3]", cached so every
+    /// continuation can remind the model of the full sequence and stop re-planning.
+    private var cachedPlan: String = ""
+    private var cachedPlanStepCount: Int = 0
+    /// How many times a continuation has failed in this task; limits noisy retry loops.
+    private var continuationFailures: Int = 0
+    /// Parses and strips a "[PLAN: ...]" line from a model response.
+    /// Returns the plan text (without brackets) and the cleaned response.
+    /// Ingests a response from the model: pulls out a [PLAN: ...] line if present (caching it
+    /// for later continuations) and returns the cleaned text to speak/display.
+    private func ingestPlanFromResponse(_ text: String) -> String {
+        let parsed = Self.extractPlan(from: text)
+        if !parsed.plan.isEmpty && self.cachedPlan.isEmpty {
+            self.cachedPlan = parsed.plan
+            self.cachedPlanStepCount = max(parsed.stepCount, 1)
+            self.logger?.log("Cached plan (\(self.cachedPlanStepCount) steps): \(parsed.plan)", tag: "guide")
+        }
+        return parsed.cleaned
     }
 
-    /// Detects the [POINT:none] end-of-tour marker that doesn't match the coordinate regex.
+    private static func extractPlan(from text: String) -> (plan: String, stepCount: Int, cleaned: String) {
+        let regex = try? NSRegularExpression(pattern: #"\[PLAN:\s*([^\]]+)\]"#, options: [.caseInsensitive])
+        guard let regex else { return ("", 0, text) }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range),
+              let planRange = Range(match.range(at: 1), in: text),
+              let fullRange = Range(match.range, in: text) else {
+            return ("", 0, text)
+        }
+        let planText = String(text[planRange]).trimmingCharacters(in: .whitespaces)
+        let stepCount = planText
+            .components(separatedBy: CharacterSet(charactersIn: "→>,;·•|"))
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .count
+        var cleaned = text
+        cleaned.removeSubrange(fullRange)
+        return (planText, stepCount, cleaned.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Whether the current task is user wanting Anna to *do* it, or asking Anna to *teach* them how.
+    /// Preserved across continuation turns so the whole task stays in one mode.
+    enum TaskIntent { case doIt, teach }
+    private var taskIntent: TaskIntent = .doIt
+    /// Counts consecutive same-coordinate pointers in teach mode — if the user doesn't move
+    /// after 3 attempts at the same spot, we bail out instead of re-pointing forever.
+    private var teachSamePointerStreak: Int = 0
+    private var lastTeachPointerKey: String = ""
+
+    private static let teachPhrases: [String] = [
+        "how do i", "how to", "how can i", "how should i",
+        "show me how", "show me where", "show me the",
+        "teach me", "guide me", "walk me through",
+        "where is", "where's", "where do i", "where can i",
+        "tell me how", "explain how", "help me find"
+    ]
+
+    /// Client-side intent heuristic. The system prompt also enforces this model-side
+    /// so obvious miscalls are corrected. Ambiguous inputs default to `.teach` (safer —
+    /// user can always say "just do it").
+    static func detectIntent(from text: String) -> TaskIntent {
+        let lower = text.lowercased()
+        if teachPhrases.contains(where: { lower.contains($0) }) { return .teach }
+        if lower.contains("?") && !lower.hasPrefix("can you ") && !lower.hasPrefix("could you ") {
+            // Questions default to teach, except "can you do X?" which is a polite command.
+            return .teach
+        }
+        return .doIt
+    }
+
+    /// Detects the end-of-task marker. [POINT:none] is the canonical done signal;
+    /// [DONE] is also accepted for models that find it more natural.
     private static func isTourEndMarker(_ text: String) -> Bool {
-        text.range(of: #"\[POINT:\s*none\s*\]"#, options: .regularExpression) != nil
+        if text.range(of: #"\[POINT:\s*none\s*\]"#, options: .regularExpression) != nil { return true }
+        if text.range(of: #"\[DONE\]"#, options: .regularExpression) != nil { return true }
+        return false
     }
 
     private func handlePointerAndSpeak(pointer: PointerCoordinate?, responseText: String) {
@@ -327,61 +479,85 @@ final class AssistantViewModel: ObservableObject {
             }
 
             await MainActor.run {
+                if isTourEnd {
+                    // Model decided the task is done — trust its judgment.
+                    self.finishTour()
+                    return
+                }
+
+                // TEACH intent: never click. Point, then wait for the user to do it themselves.
+                if self.taskIntent == .teach && pointer != nil {
+                    let key = "\(pointer!.x),\(pointer!.y)"
+                    if key == self.lastTeachPointerKey {
+                        self.teachSamePointerStreak += 1
+                    } else {
+                        self.teachSamePointerStreak = 1
+                        self.lastTeachPointerKey = key
+                    }
+
+                    if self.teachSamePointerStreak >= 3 {
+                        self.logger?.log("Teach mode: 3× same pointer with no user action — bailing", tag: "guide")
+                        self.statusLine = "Hmm, looks stuck. Tell me if you'd like me to do it for you."
+                        self.status = .idle
+                        return
+                    }
+
+                    self.guidedModeStepCount += 1
+                    self.statusLine = "Your turn — click the highlighted spot."
+                    self.status = .idle
+                    self.logger?.log("Teach step \(self.guidedModeStepCount) — waiting for user action at \(key)", tag: "guide")
+
+                    // Wait until the user has been idle for a beat (i.e. they did something and paused),
+                    // then advance. Safety cap: give up after 60s of inactivity.
+                    if self.guidedModeStepCount < self.maxGuidedSteps {
+                        self.waitForUserAndContinue()
+                    } else {
+                        self.logger?.log("Task hit safety cap (\(self.maxGuidedSteps) steps) — stopping", tag: "guide")
+                        self.finishTour()
+                    }
+                    return
+                }
+
+                // DO intent + CLICK — execute ourselves, then continue.
                 if isClick, let loc = clickLocation {
-                    // Click AFTER speech finishes
                     self.pointerOverlayManager.clickRippleAt = loc
                     ClickSimulator.click(at: loc)
                     self.logger?.log("Guided click at (\(Int(loc.x)), \(Int(loc.y))): \(pointer?.label ?? "element")", tag: "guide")
                     self.tourAnalytics.stepClicked(stepIndex: self.guidedModeStepCount, clickTarget: pointer?.label, durationMs: 0)
 
-                    if self.isInTourMode {
-                        // Tour mode: keep overlay, continue after delay
-                        self.guidedModeStepCount += 1
-                        self.statusLine = "Showing you around... step \(self.guidedModeStepCount + 1)"
-                        if self.guidedModeStepCount < self.maxGuidedSteps {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                                self.continueGuidedWalkthrough()
-                            }
-                        } else {
-                            self.finishTour()
+                    self.guidedModeStepCount += 1
+                    self.statusLine = "Working on it... step \(self.guidedModeStepCount + 1)"
+                    if self.guidedModeStepCount < self.maxGuidedSteps {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            self.continueGuidedWalkthrough()
                         }
                     } else {
-                        // One-off click — hide pointer after brief delay
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            self.pointerOverlayManager.hide()
-                        }
-                        self.status = .idle
-                        self.statusLine = "All done — I'm here if you need me."
+                        self.logger?.log("Task hit safety cap (\(self.maxGuidedSteps) steps) — stopping", tag: "guide")
+                        self.finishTour()
                     }
+                    return
+                }
 
-                } else if isTourEnd {
-                    // Claude decided the tour is done — trust its judgment
-                    self.finishTour()
-
-                } else if self.isInTourMode {
-                    // Mid-tour response without a click (e.g., POINT action or description-only)
-                    // Keep tour alive and continue to next step
+                // DO intent + POINT mid-task (model chose to just indicate something, not click).
+                if pointer != nil && self.isInTourMode {
                     self.guidedModeStepCount += 1
-                    if pointer != nil {
-                        // Has a POINT — show it briefly, then continue
+                    if self.guidedModeStepCount < self.maxGuidedSteps {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                             self.continueGuidedWalkthrough()
                         }
-                    } else if self.guidedModeStepCount < self.maxGuidedSteps {
-                        // No pointer but still in tour — continue
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                            self.continueGuidedWalkthrough()
-                        }
                     } else {
+                        self.logger?.log("Task hit safety cap (\(self.maxGuidedSteps) steps) — stopping", tag: "guide")
                         self.finishTour()
                     }
-
-                } else {
-                    // Not in tour mode, no click — just finish
-                    self.pointerOverlayManager.hide()
-                    self.status = .idle
-                    self.statusLine = "All done — I'm here if you need me."
+                    return
                 }
+
+                // No click, no pointer — single-turn answer (e.g. "it's 3pm"). Task ends naturally.
+                self.pointerOverlayManager.hide()
+                self.isInTourMode = false
+                self.guidedModeStepCount = 0
+                self.status = .idle
+                self.statusLine = "All done — I'm here if you need me."
             }
         }
     }
@@ -400,11 +576,67 @@ final class AssistantViewModel: ObservableObject {
         self.logger?.log("Guided tour finished", tag: "guide")
     }
 
+    /// Teach mode: as soon as the user clicks and pauses briefly (~800ms), advance.
+    /// Bails after 60s if they don't click at all.
+    private func waitForUserAndContinue() {
+        let taskAtSchedule = self.tourStartTime
+        let quiescenceThreshold: TimeInterval = 0.8  // fast: advance 0.8s after their last click
+        let maxWait: TimeInterval = 60
+
+        // Clear any stale click marker so we only match a NEW click after this step began.
+        idleDetector.resetClickMarker()
+
+        Task {
+            let startedAt = Date()
+            while Date().timeIntervalSince(startedAt) < maxWait {
+                if self.tourStartTime != taskAtSchedule { return }
+
+                let sinceInput = self.idleDetector.secondsSinceLastInput
+                let lastClick = self.idleDetector.lastClickTimestamp
+                let hasClicked = lastClick != nil
+
+                // Advance when: they've clicked at least once since we started waiting,
+                // they've been quiet for ≥ threshold, and we're not already busy.
+                if hasClicked,
+                   sinceInput >= quiescenceThreshold,
+                   !self.isCapturing,
+                   !self.ttsService.isSpeaking {
+                    await MainActor.run {
+                        self.logger?.log("Teach step: click detected + \(String(format: "%.1f", sinceInput))s quiet — advancing", tag: "guide")
+                        self.idleDetector.observationDidComplete()
+                        self.continueGuidedWalkthrough()
+                    }
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 150_000_000)  // poll every 150ms for responsiveness
+            }
+            await MainActor.run {
+                guard self.tourStartTime == taskAtSchedule else { return }
+                self.logger?.log("Teach mode: 60s no click — ending task", tag: "guide")
+                self.finishTour()
+            }
+        }
+    }
+
     private func continueGuidedWalkthrough() {
         guard !isCapturing else { return }
         self.status = .thinking
-        self.statusLine = "Showing you around... step \(guidedModeStepCount + 1)"
-        self.logger?.log("Guided mode: continuing walkthrough (step \(guidedModeStepCount + 1))", tag: "guide")
+
+        let stepNum = self.guidedModeStepCount + 1
+        let progressSuffix: String
+        if self.cachedPlanStepCount > 0 {
+            let clamped = min(stepNum, self.cachedPlanStepCount)
+            progressSuffix = "step \(clamped) of \(self.cachedPlanStepCount)"
+        } else {
+            progressSuffix = "step \(stepNum)"
+        }
+
+        if self.taskIntent == .teach {
+            self.statusLine = "\(progressSuffix.capitalized) — your turn"
+        } else {
+            self.statusLine = "Working on \(progressSuffix)..."
+        }
+        self.logger?.log("Continuing walkthrough (\(progressSuffix), plan: '\(self.cachedPlan)')", tag: "guide")
 
         // Ensure overlay is visible for the next pointer
         if !self.pointerOverlayManager.isVisible {
@@ -413,9 +645,19 @@ final class AssistantViewModel: ObservableObject {
 
         Task {
             do {
-                let stepNum = self.guidedModeStepCount + 1
-                let originalRequest = self.tourOriginalRequest.isEmpty ? "a tour" : "\"\(self.tourOriginalRequest)\""
-                let result = try await engine.executeInternalText("Continuing the user's tour — they originally asked: \(originalRequest). This is step \(stepNum). Look at the NEW screenshot. If it looks the same as before, the click didn't work — say so briefly and try clicking a slightly different spot. Otherwise, describe what you SEE in 1-2 short sentences, then click the NEXT element using [CLICK:x,y:label]. Guide through whatever app is visible — do NOT switch apps. Match the depth of tour the user asked for: quick/basic = cover main features only (3-5 steps), complete/full/everything = cover ALL features thoroughly (10+ steps), unspecified = cover the core features (5-8 steps). When you have fulfilled the user's request, wrap up with [POINT:none].")
+                let originalRequest = self.tourOriginalRequest.isEmpty ? "their previous request" : "\"\(self.tourOriginalRequest)\""
+                let planBlock: String = self.cachedPlan.isEmpty
+                    ? ""
+                    : "YOUR PLAN (made on step 1): \(self.cachedPlan). You are now at step \(stepNum). Stick to the plan. Do NOT re-plan. "
+
+                let prompt: String
+                switch self.taskIntent {
+                case .teach:
+                    prompt = "\(planBlock)TEACHING the user. Original ask: \(originalRequest). Look at the NEW screenshot. Did they advance past the previous step? YES → next step from the plan in ONE short sentence (max 8 words) + [POINT:x,y:label]. NO → re-point same spot, ONE short line. Goal reached → 'nice, got it' + [POINT:none]. NEVER use [CLICK:...]. Be EXTREMELY brief — every word costs the user time."
+                case .doIt:
+                    prompt = "\(planBlock)Continuing the user's task. Original ask: \(originalRequest). Look at the NEW screenshot. Is the original goal satisfied now? YES → short closing line + [POINT:none]. NO → do the next step from the plan: 1 short sentence + [CLICK:x,y:label]. If the screen looks unchanged from before, the click didn't land — say so briefly and try a slightly different spot. Stay in the currently visible app — do NOT switch apps."
+                }
+                let result = try await self.executeContinuationWithRetry(prompt: prompt)
                 await MainActor.run {
                     self.lastTranscript = "Guided walkthrough (step \(self.guidedModeStepCount + 1))"
                     self.lastTranscriptTime = Date()
@@ -435,8 +677,10 @@ final class AssistantViewModel: ObservableObject {
                         }
 
                         self.lastResponseTime = Date()
-                        self.animateStreamingText(responseText)
-                        self.handlePointerAndSpeak(pointer: result.2, responseText: responseText)
+                        let cleanText = self.ingestPlanFromResponse(responseText)
+                        self.animateStreamingText(cleanText)
+                        self.copyResponseIfEnabled(cleanText)
+                        self.handlePointerAndSpeak(pointer: result.2, responseText: cleanText)
                     } else {
                         self.guidedModeStepCount = 0
                         self.status = .idle
@@ -445,12 +689,29 @@ final class AssistantViewModel: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self.guidedModeStepCount = 0
-                    self.status = .idle
-                    self.statusLine = "Hmm, lost my way. Try asking again?"
-                    self.logger?.log("Guided mode error: \(error.localizedDescription)", tag: "guide")
+                    self.logger?.log("Continuation error after retry: \(error.localizedDescription)", tag: "guide")
+                    self.ttsService.speak(
+                        "Hit a snag. Stopping here.",
+                        rate: self.settingsProvider().ttsRate,
+                        voiceIdentifier: self.settingsProvider().ttsVoiceIdentifier,
+                        engine: self.settingsProvider().ttsEngine,
+                        elevenLabsVoiceID: self.settingsProvider().elevenLabsVoiceID
+                    )
+                    self.finishTour()
                 }
             }
+        }
+    }
+
+    /// Runs a continuation prompt against the engine, retrying once on transient failure
+    /// with a short backoff. Throws only if both attempts fail.
+    private func executeContinuationWithRetry(prompt: String) async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
+        do {
+            return try await engine.executeInternalText(prompt)
+        } catch {
+            self.logger?.log("Continuation attempt 1 failed (\(error.localizedDescription)) — retrying", tag: "guide")
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            return try await engine.executeInternalText(prompt)
         }
     }
 

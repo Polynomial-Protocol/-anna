@@ -101,4 +101,62 @@ final class ScreenCaptureService {
     func mainScreenSize() -> CGSize {
         NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
     }
+
+    /// Captures only the frontmost window of the currently active application.
+    /// Falls back to a full-screen capture if no suitable window is found.
+    /// Ported from Clicky-tutor (danpeg/clicky).
+    func captureFocusedWindowToFile() async throws -> (url: URL, widthPixels: Int, heightPixels: Int, displayWidthPoints: Int, displayHeightPoints: Int) {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw AnnaError.screenCaptureFailed("Screen Recording permission not granted.")
+        }
+
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let ownBundleID = Bundle.main.bundleIdentifier
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+
+        let focusedWindow = content.windows.first { window in
+            guard let appID = window.owningApplication?.bundleIdentifier else { return false }
+            guard appID != ownBundleID else { return false }
+            guard appID == frontmostApp?.bundleIdentifier else { return false }
+            return window.isOnScreen && window.frame.width > 100 && window.frame.height > 100
+        }
+
+        guard let targetWindow = focusedWindow else {
+            return try await captureToFile()
+        }
+
+        let filter = SCContentFilter(desktopIndependentWindow: targetWindow)
+        let config = SCStreamConfiguration()
+        let maxDimension = 1280
+        let windowWidth = Int(targetWindow.frame.width)
+        let windowHeight = Int(targetWindow.frame.height)
+        let aspectRatio = CGFloat(windowWidth) / CGFloat(max(windowHeight, 1))
+        if windowWidth >= windowHeight {
+            config.width = maxDimension
+            config.height = Int(CGFloat(maxDimension) / aspectRatio)
+        } else {
+            config.height = maxDimension
+            config.width = Int(CGFloat(maxDimension) * aspectRatio)
+        }
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.showsCursor = false
+
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: filter,
+            configuration: config
+        )
+
+        guard let jpegData = NSBitmapImageRep(cgImage: image)
+                .representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else {
+            throw AnnaError.screenCaptureFailed("Could not encode focused-window JPEG.")
+        }
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("anna-window-\(UUID().uuidString)")
+            .appendingPathExtension("jpg")
+        try jpegData.write(to: url)
+
+        return (url: url, widthPixels: image.width, heightPixels: image.height,
+                displayWidthPoints: windowWidth, displayHeightPoints: windowHeight)
+    }
 }

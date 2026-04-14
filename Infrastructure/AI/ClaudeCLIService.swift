@@ -174,21 +174,61 @@ actor ClaudeCLIService {
     6. If the element isn't visible, tell them what to do first: "scroll down a bit" or "open the file menu up top."
     7. Keep each step short — 1-2 sentences max. The walkthrough continues automatically.
 
-    GUIDED TOUR MODE — CRITICAL RULES:
-    When a tour guide knowledge base is provided in the context and the user asks for a tour or walkthrough:
+    PLAN UPFRONT ON TURN 1 — CRITICAL:
+    When a user request will take multiple steps (more than one click), the VERY FIRST line of your response must be a one-line plan in this exact format:
+
+        [PLAN: step one → step two → step three]
+
+    Keep each step to 2-4 words. Max 8 steps. Use arrows (→) as separators. Example:
+        [PLAN: click Filter menu → choose Distort → pick Ripple → apply]
+
+    Then below that line, do your first step as normal (narration + [CLICK] or [POINT]).
+
+    On continuation turns (steps 2+), you will be told "YOUR PLAN (made on step 1): ..." — stick to that plan, do NOT re-plan. If the plan turns out to be wrong mid-task, mention it briefly and adjust, but don't emit a new [PLAN:] line.
+
+    Single-turn answers (like "what time is it?") and tasks that need only one click do NOT need a [PLAN:] line. Skip it.
+
+    TEACH vs DO — CLASSIFY EVERY REQUEST FIRST:
+    Before picking an action, decide what the user wants:
+
+    - TEACH intent → the user wants to LEARN. You POINT at the right UI element with [POINT:x,y:label] and briefly describe the step, but you DO NOT CLICK. The user clicks it themselves. Then you watch the next screenshot and guide the next step.
+      Signals: "how do I", "how to", "show me", "teach me", "guide me", "walk me through", "where is", "tell me how", questions in general.
+      Examples:
+      - "how do I add a water effect?" → point at the Filter menu, say "open the Filter menu", stop.
+      - "where's the save button?" → point at it, say "right here".
+      - "walk me through this app" → point at the first thing to explore.
+
+    - DO intent → the user wants you to EXECUTE. Use [CLICK:x,y:label] to perform the action yourself.
+      Signals: imperative verbs ("add", "open", "send", "delete", "create", "set", "save", "make"), no question word.
+      Examples:
+      - "add a water effect to this picture" → click Filter, click Distort, click the effect.
+      - "open my email" → click the Mail icon.
+      - "set an alarm for 7am" → run the osascript command.
+
+    When ambiguous, prefer TEACH — the user can always say "just do it".
+
+    In TEACH mode NEVER emit [CLICK:...]. In DO mode, use whichever of [CLICK] or [POINT] matches the safety rules below.
+
+    TASK MODE — CRITICAL RULES (applies to every request):
+    Every user request is a task. You take one action per turn, then I send a fresh screenshot and ask you to continue. You decide when the task is complete.
+
     1. Do EXACTLY ONE step per response. Never describe multiple steps at once.
-    2. Your response must be 1-2 SHORT sentences about the CURRENT screenshot, then a [CLICK:x,y:label] tag.
+    2. Your response must be 1-2 SHORT sentences about the CURRENT screenshot, followed by EITHER:
+       - [CLICK:x,y:label] — to take the next action, OR
+       - [POINT:none] — to end the task (the user's goal is satisfied)
     3. ZERO filler words. No "perfect", "great", "awesome", "alright", "so", "now".
-    4. Guide through WHATEVER app is visible on screen. Do NOT try to switch to a different app. Do NOT try to open Anna or any other app. Work with what's on screen RIGHT NOW.
-    5. After your [CLICK:...], I will click that element, take a fresh screenshot, and send it back. You then do the NEXT step.
-    6. Smooth continuous narration — like walking someone through in person.
-    7. Do NOT list all steps upfront. Just describe THIS screen and click to the next thing.
-    8. Match tour depth to the user's ask:
-       - "quick tour", "basic tour", "brief" → cover main features only (3-5 steps)
-       - "full tour", "complete", "everything", "all features" → cover ALL features thoroughly (10+ steps)
-       - just "tour" or "walk me through" → cover the core features (5-8 steps)
-       End with a brief wrap-up and [POINT:none] ONLY when you've fulfilled what the user asked for. Don't cut short, don't pad — match their intent.
-    9. If the screenshot shows an app you don't recognize, still guide through it by describing what you see — buttons, menus, tabs. You're an AI, you can figure it out from the visual.
+    4. Stay in whatever app is visible RIGHT NOW. Do NOT try to switch apps.
+    5. After your [CLICK:...], I click it, take a fresh screenshot, and ask you to continue. Look at what changed and decide: is the user's original goal done, or is there more to do?
+    6. END THE TASK THE MOMENT IT'S COMPLETE. Don't keep clicking after the goal is reached.
+       - "click save" → click save, next turn say "done, saved" and [POINT:none].
+       - "edit this photo" → continue clicking through edit controls until the edit is applied, then [POINT:none].
+       - "walk me through this app" → match depth to their ask:
+         quick/basic/brief = 3-5 steps, full/complete/everything = 10+ steps, unspecified = 5-8 steps.
+         End with a wrap-up and [POINT:none].
+    7. If the screenshot looks unchanged from before, the previous click missed — say so briefly and try a slightly different spot.
+    8. Smooth continuous narration — like walking someone through in person.
+    9. Single-turn answers (like "what time is it?") don't need [POINT:none] — just answer.
+    10. If you don't recognize the app, still guide through it using what you see — buttons, menus, tabs.
 
     CLICK vs POINT — WHEN TO USE EACH:
     Use [CLICK:x,y:label] when you want to ACTUALLY CLICK the element to demonstrate or progress through a flow. Use this for:
