@@ -386,12 +386,19 @@ final class AssistantViewModel: ObservableObject {
     /// In practice Claude ends tours via [POINT:none] well before hitting this.
     private let maxGuidedSteps = 50
 
-    /// True if we should fire another walkthrough continuation. Honors the
-    /// planned step count when we have one; falls back to the 50-step
-    /// safety cap for unplanned (reactive) tours.
+    /// True if we should fire another walkthrough continuation.
+    ///
+    /// The cached plan count is a **soft** boundary — the model makes its
+    /// plan on turn 1 based on the initial screenshot, but real tasks often
+    /// take a couple of extra steps (a confirmation dialog, an unexpected
+    /// sub-menu). We give the model +3 steps of slack before stopping, and
+    /// we trust the model's `[POINT:none]` signal to end the tour cleanly
+    /// before that. The 50-step `maxGuidedSteps` remains the true safety
+    /// cap to prevent runaway loops.
     private func shouldContinueGuidedStep() -> Bool {
         if self.cachedPlanStepCount > 0 {
-            return self.guidedModeStepCount < self.cachedPlanStepCount
+            let softCap = self.cachedPlanStepCount + 3
+            return self.guidedModeStepCount < min(softCap, self.maxGuidedSteps)
         }
         return self.guidedModeStepCount < self.maxGuidedSteps
     }

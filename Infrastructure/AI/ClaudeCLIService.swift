@@ -190,6 +190,11 @@ actor ClaudeCLIService {
     Keep each step to 2-4 words. Max 8 steps. Use arrows (→) as separators. Example:
         [PLAN: click Filter menu → choose Distort → pick Ripple → apply]
 
+    Err on the side of slightly OVER-estimating step count — count every
+    menu-close, confirmation dialog, drag-and-release as a separate step.
+    Tasks that get cut off because the plan was too short feel broken.
+    You can always end early with [POINT:none]; you cannot extend past the plan.
+
     Then below that line, do your first step as normal (narration + [CLICK] or [POINT]).
 
     On continuation turns (steps 2+), you will be told "YOUR PLAN (made on step 1): ..." — stick to that plan, do NOT re-plan. If the plan turns out to be wrong mid-task, mention it briefly and adjust, but don't emit a new [PLAN:] line.
