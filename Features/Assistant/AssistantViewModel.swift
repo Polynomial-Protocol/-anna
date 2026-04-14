@@ -47,7 +47,22 @@ final class AssistantViewModel: ObservableObject {
         self.settingsUpdater = settingsUpdater
     }
 
+    /// Whether Anna paused media when starting capture — so we know whether to resume afterward.
+    private var didPauseMedia = false
+
     func beginCapture(mode: CaptureMode) {
+        // Interrupt any current activity: stop TTS, cancel in-flight tour continuations
+        if ttsService.isSpeaking {
+            ttsService.stop()
+            logger?.log("Interrupted TTS — user pressed hotkey", tag: "interrupt")
+        }
+        if isInTourMode {
+            // User is interjecting mid-tour — stop the tour so this new command is standalone
+            isInTourMode = false
+            guidedModeStepCount = 0
+            logger?.log("Interrupted tour — user pressed hotkey", tag: "interrupt")
+        }
+
         guard !isCapturing else { return }
         isCapturing = true
         activeMode = mode
@@ -61,6 +76,15 @@ final class AssistantViewModel: ObservableObject {
         case .rewriteDictation: statusLine = "Speak freely — I'll clean it up after..."
         }
         logger?.log("Begin capture — mode: \(mode.rawValue)", tag: "capture")
+
+        // Pause any media playing so mic capture isn't contaminated
+        Task {
+            let paused = await MediaController.pauseIfPlaying()
+            await MainActor.run {
+                self.didPauseMedia = paused
+                if paused { self.logger?.log("Paused media for capture", tag: "media") }
+            }
+        }
 
         Task {
             do {
