@@ -214,11 +214,15 @@ actor AssistantEngine {
             role: .assistant, content: cleanText, timestamp: Date()
         ))
 
-        await knowledgeStore.addEntry(
-            content: "Q: \(request)\nA: \(cleanText)",
-            source: .conversation,
-            title: String(request.prefix(80))
-        )
+        // Don't save internal turns (tour continuations, system prompts) to the knowledge base.
+        // They pollute the KB and trigger false duplicate-detection.
+        if !isInternal {
+            await knowledgeStore.addEntry(
+                content: "Q: \(request)\nA: \(cleanText)",
+                source: .conversation,
+                title: String(request.prefix(80))
+            )
+        }
 
         let outcome: AutomationOutcome = result.success
             ? .completed(summary: cleanText, openedURL: nil)

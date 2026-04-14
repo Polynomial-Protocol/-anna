@@ -372,27 +372,32 @@ actor KnowledgeStore {
         return archived
     }
 
-    /// Consolidate: deduplicate + archive stale + backfill embeddings.
-    /// Call periodically (e.g., on app launch or after 100+ new entries).
+    /// Consolidate memory — only runs safe additive operations (embedding backfill).
+    /// Destructive operations (dedup, stale deletion) are available as separate
+    /// methods that the user can invoke manually — we don't run them automatically.
     func consolidate() async {
-        // 1. Backfill any missing embeddings
+        // Safe: backfill any missing embeddings
         await backfillEmbeddings(batchSize: 100)
+    }
 
-        // 2. Archive stale entries
-        let archived = deleteStaleEntries()
-        if archived > 0 {
-            // Reload cache after deletion
-            loadEmbeddingCache()
-        }
-
-        // 3. Deduplicate (merge newer into older, delete newer)
-        let dupes = findDuplicates()
-        for (keepID, removeID) in dupes {
+    /// Destructive: run manually to deduplicate near-identical entries.
+    /// Uses a high threshold (0.97) to avoid deleting distinct but semantically similar entries.
+    func runDeduplication(threshold: Float = 0.97) -> Int {
+        let dupes = findDuplicates(threshold: threshold)
+        var removed = 0
+        for (_, removeID) in dupes {
             deleteEntry(id: removeID)
+            removed += 1
         }
-        if !dupes.isEmpty {
-            loadEmbeddingCache()
-        }
+        if removed > 0 { loadEmbeddingCache() }
+        return removed
+    }
+
+    /// Destructive: run manually to delete stale entries that haven't been accessed.
+    func runStaleCleanup() -> Int {
+        let removed = deleteStaleEntries()
+        if removed > 0 { loadEmbeddingCache() }
+        return removed
     }
 
     /// Entries that may be stale and need user confirmation.
