@@ -169,6 +169,10 @@ actor KnowledgeStore {
             db = nil
             return
         }
+        // Enable foreign keys so ON DELETE CASCADE works for embeddings
+        execute("PRAGMA foreign_keys = ON")
+        // One-time cleanup: delete orphaned embeddings from before FK was enabled
+        execute("DELETE FROM embeddings WHERE entry_id NOT IN (SELECT id FROM entries)")
     }
 
     private func createTables() {
