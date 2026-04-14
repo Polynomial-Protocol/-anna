@@ -110,7 +110,7 @@ Anna requires these permissions (requested one at a time, with explanations):
 ```
 Anna/
 ├── App/                          # Entry point and DI container
-│   ├── MariaApp.swift           # @main app struct + AppDelegate
+│   ├── AnnaApp.swift            # @main app struct + AppDelegate
 │   ├── AppContainer.swift       # Dependency injection, service wiring
 │   └── RootContentView.swift    # Onboarding vs workspace routing
 │
@@ -148,7 +148,7 @@ Anna/
 │   └── AppSettings.swift        # PushModifier enum
 │
 ├── UIComponents/                 # Reusable SwiftUI views
-│   ├── MariaWorkspaceView.swift # Sidebar + detail pane (AnnaWorkspaceView)
+│   ├── AnnaWorkspaceView.swift  # Sidebar + detail pane
 │   ├── ResponseBubbleView.swift # Floating response panel
 │   ├── TextBarView.swift        # Floating text input panel
 │   ├── PointerOverlayView.swift # Blue triangle cursor overlay

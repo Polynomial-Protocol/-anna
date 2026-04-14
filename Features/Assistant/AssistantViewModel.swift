@@ -27,6 +27,10 @@ final class AssistantViewModel: ObservableObject {
     private let settingsProvider: () -> AppSettings
     private let settingsUpdater: (AppSettings) -> Void
     var logger: RuntimeLogger?
+    /// Injected by `AppContainer` so typed walkthrough requests can bypass
+    /// the agent and open the stepper panel directly. Optional so tests /
+    /// lightweight contexts can skip it.
+    weak var walkthroughController: WalkthroughController?
     var tourAnalytics: TourAnalytics { TourAnalytics(logger: logger) }
 
     private var recorderReady = false
@@ -108,7 +112,10 @@ final class AssistantViewModel: ObservableObject {
                     let cleanText = self.ingestPlanFromResponse(responseText)
                     self.animateStreamingText(cleanText)
                     self.copyResponseIfEnabled(cleanText)
-                    self.handlePointerAndSpeak(pointer: result.2, responseText: cleanText)
+                    // Tutor observations must NOT start a guided walkthrough —
+                    // pass standalone: true so handlePointerAndSpeak only
+                    // renders the pointer + TTS and then exits.
+                    self.handlePointerAndSpeak(pointer: result.2, responseText: cleanText, standalone: true)
                 }
             } catch {
                 await MainActor.run {
@@ -295,6 +302,18 @@ final class AssistantViewModel: ObservableObject {
     func sendText(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isCapturing else { return }
+
+        // Walkthrough intent: "show me how to X", "walk me through X",
+        // "teach me X", "guide me through X" → route to stepper instead
+        // of the agent, so the user gets a real sequenced plan.
+        if let task = Self.extractWalkthroughTask(from: trimmed),
+           let walkthrough = walkthroughController {
+            let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? "this app"
+            logger?.log("Walkthrough intent: \"\(task)\" in \(appName)", tag: "walkthrough")
+            walkthrough.start(task: task, appName: appName)
+            return
+        }
+
         isCapturing = true
         status = .thinking
         streamingText = ""
@@ -366,6 +385,16 @@ final class AssistantViewModel: ObservableObject {
     /// Hard safety cap against infinite loops — matches the conversation session turn limit (100 turns ≈ 50 steps).
     /// In practice Claude ends tours via [POINT:none] well before hitting this.
     private let maxGuidedSteps = 50
+
+    /// True if we should fire another walkthrough continuation. Honors the
+    /// planned step count when we have one; falls back to the 50-step
+    /// safety cap for unplanned (reactive) tours.
+    private func shouldContinueGuidedStep() -> Bool {
+        if self.cachedPlanStepCount > 0 {
+            return self.guidedModeStepCount < self.cachedPlanStepCount
+        }
+        return self.guidedModeStepCount < self.maxGuidedSteps
+    }
     @Published var isInTourMode = false
     /// Stores the user's original tour request so continuation prompts can preserve the user's intent (basic vs complete).
     private var tourOriginalRequest: String = ""
@@ -448,7 +477,7 @@ final class AssistantViewModel: ObservableObject {
         return false
     }
 
-    private func handlePointerAndSpeak(pointer: PointerCoordinate?, responseText: String) {
+    private func handlePointerAndSpeak(pointer: PointerCoordinate?, responseText: String, standalone: Bool = false) {
         let isClick = pointer?.action == .click
         let clickLocation = isClick ? pointer.flatMap { PointerOverlayManager.screenLocation(for: $0) } : nil
         let isTourEnd = Self.isTourEndMarker(responseText)
@@ -485,6 +514,16 @@ final class AssistantViewModel: ObservableObject {
                     return
                 }
 
+                // STANDALONE calls (tutor idle observation, first-launch tip, etc.)
+                // must not drive a guided walkthrough — they're one-shot hints.
+                // Render pointer + speech, then exit without entering any
+                // waitForUserAndContinue / continueGuidedWalkthrough loop.
+                if standalone {
+                    self.status = .idle
+                    self.statusLine = "I'm right here — hold Right ⌘ to talk."
+                    return
+                }
+
                 // TEACH intent: never click. Point, then wait for the user to do it themselves.
                 if self.taskIntent == .teach && pointer != nil {
                     let key = "\(pointer!.x),\(pointer!.y)"
@@ -509,10 +548,10 @@ final class AssistantViewModel: ObservableObject {
 
                     // Wait until the user has been idle for a beat (i.e. they did something and paused),
                     // then advance. Safety cap: give up after 60s of inactivity.
-                    if self.guidedModeStepCount < self.maxGuidedSteps {
+                    if self.shouldContinueGuidedStep() {
                         self.waitForUserAndContinue()
                     } else {
-                        self.logger?.log("Task hit safety cap (\(self.maxGuidedSteps) steps) — stopping", tag: "guide")
+                        self.logger?.log("Plan complete — finishing tour after last step", tag: "guide")
                         self.finishTour()
                     }
                     return
@@ -527,12 +566,12 @@ final class AssistantViewModel: ObservableObject {
 
                     self.guidedModeStepCount += 1
                     self.statusLine = "Working on it... step \(self.guidedModeStepCount + 1)"
-                    if self.guidedModeStepCount < self.maxGuidedSteps {
+                    if self.shouldContinueGuidedStep() {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                             self.continueGuidedWalkthrough()
                         }
                     } else {
-                        self.logger?.log("Task hit safety cap (\(self.maxGuidedSteps) steps) — stopping", tag: "guide")
+                        self.logger?.log("Plan complete — finishing tour after last step", tag: "guide")
                         self.finishTour()
                     }
                     return
@@ -541,12 +580,12 @@ final class AssistantViewModel: ObservableObject {
                 // DO intent + POINT mid-task (model chose to just indicate something, not click).
                 if pointer != nil && self.isInTourMode {
                     self.guidedModeStepCount += 1
-                    if self.guidedModeStepCount < self.maxGuidedSteps {
+                    if self.shouldContinueGuidedStep() {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                             self.continueGuidedWalkthrough()
                         }
                     } else {
-                        self.logger?.log("Task hit safety cap (\(self.maxGuidedSteps) steps) — stopping", tag: "guide")
+                        self.logger?.log("Plan complete — finishing tour after last step", tag: "guide")
                         self.finishTour()
                     }
                     return
@@ -755,6 +794,47 @@ final class AssistantViewModel: ObservableObject {
             logger?.log("  \(s.kind.rawValue): \(s.state.rawValue) — \(s.detail)", tag: "permission")
         }
         return summary
+    }
+
+    /// Surfaces a proactive tip (e.g. first-launch onboarding) in the response
+    /// bubble. Public so `AppActivationObserver` can push first-launch tips
+    /// without going through a capture cycle.
+    func displayProactiveTip(_ text: String) {
+        lastTranscript = ""
+        streamingText = text
+        lastResponseTime = Date()
+        statusLine = text
+        pushEvent(title: "Onboarding tip", body: text, tone: .neutral)
+    }
+
+    /// Detect a walkthrough intent in a free-form sentence and return the
+    /// extracted task, stripped of the triggering phrase. Returns nil when
+    /// the sentence is a normal agent command.
+    ///
+    /// Examples that match:
+    ///   "show me how to add a layer mask" → "add a layer mask"
+    ///   "walk me through exporting to PDF" → "exporting to PDF"
+    ///   "teach me how to set up a pivot table" → "set up a pivot table"
+    ///   "guide me through sharing a file" → "sharing a file"
+    static func extractWalkthroughTask(from text: String) -> String? {
+        let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        // Ordered longest-first so we strip the most specific prefix.
+        let triggers = [
+            "show me how to ",
+            "teach me how to ",
+            "walk me through ",
+            "guide me through ",
+            "teach me to ",
+            "teach me ",
+            "how do i "
+        ]
+        for t in triggers where lower.hasPrefix(t) {
+            let task = String(text.dropFirst(t.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            // Drop trailing "?" or "."
+            let trimmed = task.trimmingCharacters(in: CharacterSet(charactersIn: "?."))
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
     }
 
     private func pushEvent(title: String, body: String, tone: AssistantEvent.EventTone) {

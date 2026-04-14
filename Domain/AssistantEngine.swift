@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import AppKit
 
 actor AssistantEngine {
     private let audioCaptureService: AudioCaptureService
@@ -12,8 +13,14 @@ actor AssistantEngine {
     private let knowledgeStore: KnowledgeStore
     private let tourGuideStore: TourGuideStore
     private let settingsProvider: () -> AppSettings
+    private let perception: PerceptionEngine
+    private let wikiKB: WikiKnowledgeBase
 
     private var activeMode: CaptureMode?
+    private var lastTutorObservationAt: Date?
+    private static let tutorMinInterval: TimeInterval = 3.0
+    /// Spec anti-hallucination threshold: skip proactive tips below this.
+    private static let confidenceFloor = 40
 
     init(
         audioCaptureService: AudioCaptureService,
@@ -25,7 +32,9 @@ actor AssistantEngine {
         conversationStore: ConversationStore,
         knowledgeStore: KnowledgeStore,
         tourGuideStore: TourGuideStore,
-        settingsProvider: @escaping () -> AppSettings
+        settingsProvider: @escaping () -> AppSettings,
+        perception: PerceptionEngine,
+        wikiKB: WikiKnowledgeBase = .shared
     ) {
         self.audioCaptureService = audioCaptureService
         self.voiceService = voiceService
@@ -37,6 +46,8 @@ actor AssistantEngine {
         self.knowledgeStore = knowledgeStore
         self.tourGuideStore = tourGuideStore
         self.settingsProvider = settingsProvider
+        self.perception = perception
+        self.wikiKB = wikiKB
     }
 
     // MARK: - Chat Session Management
@@ -147,6 +158,23 @@ actor AssistantEngine {
     /// Runs a proactive tutor observation — capture focused window, ask the model to
     /// guide the user's next step based on what it sees and prior conversation history.
     func executeTutorObservation() async throws -> (String, AutomationOutcome?, PointerCoordinate?) {
+        // Spec requirement: debounce to a 3s minimum interval so we don't spam the API
+        // on every screen pause. Returns a noop outcome if we're inside the cooldown.
+        if let last = lastTutorObservationAt, Date().timeIntervalSince(last) < Self.tutorMinInterval {
+            return ("", .completed(summary: "", openedURL: nil), nil)
+        }
+        lastTutorObservationAt = Date()
+
+        // Anti-hallucination: if the wiki's confidence for the frontmost app is
+        // below the floor, skip the proactive tip and log a gap instead.
+        if let bundleID = await MainActor.run(body: { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }) {
+            let confidence = await wikiKB.readConfidence(bundleID: bundleID)
+            if confidence < Self.confidenceFloor {
+                await LearningLoop.shared.recordLowConfidenceSkip(bundleID: bundleID, query: "proactive tip")
+                return ("", .completed(summary: "", openedURL: nil), nil)
+            }
+        }
+
         let prompt = "[tutor observation] Look at the screen. The user is actively using this app and just paused. Proactively guide them to the next useful step — one short action, like an instructor would. Check prior conversation history so you don't repeat yourself. If there's a specific UI element to interact with, point at it with [POINT:x,y:label]. If nothing meaningful to say, respond with just [POINT:none]."
         let tier = IntentRouter.route(prompt)
         switch tier {
@@ -196,9 +224,14 @@ actor AssistantEngine {
             role: .user, content: request, timestamp: Date(), isInternal: isInternal
         ))
 
-        let historyContext = await buildHistoryContext()
-        let knowledgeContext = await buildKnowledgeContext(for: request)
-        let tourGuideContext = await buildTourGuideContext()
+        async let historyContextAsync = buildHistoryContext()
+        async let knowledgeContextAsync = buildKnowledgeContext(for: request)
+        async let tourGuideContextAsync = buildTourGuideContext()
+        async let perceptionAsync = buildPerceptionContext()
+        let historyContext = await historyContextAsync
+        let knowledgeContext = await knowledgeContextAsync
+        let tourGuideContext = await tourGuideContextAsync
+        let perception = await perceptionAsync   // (wikiBlock, frontmostBundleID, appName, launchCount)
 
         var fullContext = historyContext ?? ""
         if let knowledge = knowledgeContext {
@@ -206,6 +239,9 @@ actor AssistantEngine {
         }
         if let tourGuide = tourGuideContext {
             fullContext += (fullContext.isEmpty ? "" : "\n\n") + tourGuide
+        }
+        if let wikiBlock = perception.wikiBlock {
+            fullContext += (fullContext.isEmpty ? "" : "\n\n") + wikiBlock
         }
         if let reason = screenshotUnavailableReason {
             fullContext += (fullContext.isEmpty ? "" : "\n\n") + reason
@@ -240,6 +276,27 @@ actor AssistantEngine {
                 source: .conversation,
                 title: String(request.prefix(80))
             )
+
+            // Append to the Karpathy-style raw/ session log. Fire-and-forget.
+            let log = WikiKnowledgeBase.SessionLog(
+                id: UUID(),
+                appBundleID: perception.bundleID,
+                appName: perception.appName,
+                userQuery: request,
+                assistantReply: cleanText,
+                screenshotWidthPixels: screenshotPixelWidth > 0 ? screenshotPixelWidth : nil,
+                screenshotHeightPixels: screenshotPixelHeight > 0 ? screenshotPixelHeight : nil,
+                followed: nil,
+                timestamp: Date()
+            )
+            Task.detached(priority: .utility) { [wikiKB] in
+                await wikiKB.appendSession(log)
+                // Karpathy loop: if ≥5 new raw sessions have stacked up for
+                // this app since the last compile, recompile the wiki page.
+                if let bid = log.appBundleID, let name = log.appName {
+                    await WikiCompiler().compileIfNeeded(bundleID: bid, appName: name)
+                }
+            }
         }
 
         let outcome: AutomationOutcome = result.success
@@ -328,6 +385,31 @@ actor AssistantEngine {
         await conversationStore.clear()
     }
 
+    // MARK: - Learning-loop hooks (call from UI buttons)
+
+    /// Called when the user visibly followed the tip (continued the task).
+    func recordTipFollowed() async {
+        guard let bid = await MainActor.run(body: { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }) else { return }
+        await LearningLoop.shared.recordSuccess(bundleID: bid)
+    }
+
+    /// Called when the user dismissed the tip ("Not now" / close).
+    func recordTipDismissed(context: String) async {
+        guard let bid = await MainActor.run(body: { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }) else { return }
+        await LearningLoop.shared.recordDismissal(bundleID: bid, context: context)
+    }
+
+    /// Force a wiki recompile for the frontmost app — useful from a debug menu.
+    func recompileFrontmostAppWiki() async {
+        let info: (String, String)? = await MainActor.run {
+            guard let app = NSWorkspace.shared.frontmostApplication,
+                  let bid = app.bundleIdentifier else { return nil }
+            return (bid, app.localizedName ?? bid)
+        }
+        guard let (bid, name) = info else { return }
+        await WikiCompiler().compileIfNeeded(bundleID: bid, appName: name, force: true)
+    }
+
     // MARK: - Conversation Context
 
     private func buildHistoryContext() async -> String? {
@@ -346,6 +428,59 @@ actor AssistantEngine {
 
         let entries = relevant.map { "- \($0.title): \($0.content.prefix(200))" }.joined(separator: "\n")
         return "Relevant memories from the user's knowledge base:\n\(entries)"
+    }
+
+    // MARK: - Perception Context
+
+    private struct PerceptionContext {
+        let wikiBlock: String?
+        let bundleID: String?
+        let appName: String?
+        let launchCount: Int
+        let confidence: Int
+    }
+
+    private func buildPerceptionContext() async -> PerceptionContext {
+        // Snapshot the frontmost app (main-actor bound).
+        let snapshot: PerceptionEngine.Snapshot? = await MainActor.run { perception.snapshotFrontmost() }
+        guard let snap = snapshot else {
+            return PerceptionContext(wikiBlock: nil, bundleID: nil, appName: nil, launchCount: 0, confidence: 50)
+        }
+
+        let confidence = await wikiKB.readConfidence(bundleID: snap.app.bundleID)
+        let kb = await wikiKB.query(appBundleID: snap.app.bundleID, appName: snap.app.name)
+
+        var lines: [String] = []
+        lines.append("FRONTMOST APP: \(snap.app.name) [\(snap.app.bundleID)] — launchCount=\(snap.app.launchCount), confidence=\(confidence), electron=\(snap.app.isElectron)")
+
+        if snap.app.launchCount == 1 {
+            lines.append("This is the user's FIRST launch of this app — favor a brief first-time orientation over generic help.")
+        }
+
+        if kb.exists, let page = kb.articles.first {
+            // Wiki pages may be long; pass the first ~1800 chars to keep prompt tight.
+            let trimmed = page.count > 1800 ? String(page.prefix(1800)) + "\n…(truncated)" : page
+            lines.append("WIKI/APPS/\(snap.app.bundleID):\n\(trimmed)")
+        } else if confidence < Self.confidenceFloor {
+            lines.append("No compiled wiki yet for this app and confidence is low — answer conservatively; if you don't know, say so rather than guessing.")
+        }
+
+        if !kb.gaps.isEmpty {
+            lines.append("Recent open gaps for this app (avoid repeating failures):\n" + kb.gaps.joined(separator: "\n"))
+        }
+
+        // Only include the AX tree if it has content — keeps token cost down.
+        if !snap.compactJSON.isEmpty && snap.compactJSON != "{}" {
+            lines.append("ACCESSIBILITY TREE (\(snap.sizeBytes)B):\n\(snap.compactJSON)")
+        }
+
+        return PerceptionContext(
+            wikiBlock: lines.joined(separator: "\n\n"),
+            bundleID: snap.app.bundleID,
+            appName: snap.app.name,
+            launchCount: snap.app.launchCount,
+            confidence: confidence
+        )
     }
 
     // MARK: - Tour Guide Context

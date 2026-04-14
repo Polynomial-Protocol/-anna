@@ -111,7 +111,8 @@ actor AIAPIService {
             "text": textParts.joined(separator: "\n\n")
         ])
 
-        // Build tools for bash/AppleScript execution
+        // Build tools for bash/AppleScript execution.
+        // Cache the tool schema — it never changes across calls.
         let tools: [[String: Any]] = [
             [
                 "name": "run_command",
@@ -125,14 +126,25 @@ actor AIAPIService {
                         ]
                     ],
                     "required": ["command"]
-                ]
+                ],
+                "cache_control": ["type": "ephemeral"]
+            ]
+        ]
+
+        // Cache the system prompt — it's ~250 lines and identical every call.
+        // Prompt caching cuts cost ~90% and latency ~30-50% on warm cache.
+        let systemBlocks: [[String: Any]] = [
+            [
+                "type": "text",
+                "text": systemPrompt,
+                "cache_control": ["type": "ephemeral"]
             ]
         ]
 
         let body: [String: Any] = [
             "model": "claude-sonnet-4-5",
             "max_tokens": 1024,
-            "system": systemPrompt,
+            "system": systemBlocks,
             "tools": tools,
             "messages": [
                 ["role": "user", "content": userContent]
@@ -154,6 +166,7 @@ actor AIAPIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("prompt-caching-2024-07-31", forHTTPHeaderField: "anthropic-beta")
         request.timeoutInterval = timeoutSeconds
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

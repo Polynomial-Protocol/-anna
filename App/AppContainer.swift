@@ -19,6 +19,13 @@ final class AppContainer: ObservableObject {
     let tourGuideStore: TourGuideStore
     let clipboardWatcher: ClipboardWatcher
     let logger: RuntimeLogger
+    let perception: PerceptionEngine
+    let tutorialEngine: TutorialEngine
+    let appActivationObserver: AppActivationObserver
+    let tipCardController: TipCardController
+    let walkthroughController: WalkthroughController
+    /// Retained so the timer isn't deallocated; not part of the public surface.
+    fileprivate var _lintScheduler: LintScheduler?
 
     @Published var settings: AppSettings {
         didSet {
@@ -39,6 +46,7 @@ final class AppContainer: ObservableObject {
             settingsUpdater: { self.settings = $0 }
         )
         vm.logger = logger
+        vm.walkthroughController = walkthroughController
         return vm
     }()
 
@@ -75,7 +83,12 @@ final class AppContainer: ObservableObject {
         knowledgeStore: KnowledgeStore,
         tourGuideStore: TourGuideStore,
         clipboardWatcher: ClipboardWatcher,
-        logger: RuntimeLogger
+        logger: RuntimeLogger,
+        perception: PerceptionEngine,
+        tutorialEngine: TutorialEngine,
+        appActivationObserver: AppActivationObserver,
+        tipCardController: TipCardController,
+        walkthroughController: WalkthroughController
     ) {
         self.permissionService = permissionService
         self.audioCaptureService = audioCaptureService
@@ -95,6 +108,11 @@ final class AppContainer: ObservableObject {
         self.tourGuideStore = tourGuideStore
         self.clipboardWatcher = clipboardWatcher
         self.logger = logger
+        self.perception = perception
+        self.tutorialEngine = tutorialEngine
+        self.appActivationObserver = appActivationObserver
+        self.tipCardController = tipCardController
+        self.walkthroughController = walkthroughController
     }
 
     static func live() -> AppContainer {
@@ -120,6 +138,18 @@ final class AppContainer: ObservableObject {
             await knowledgeStore.consolidate()
         }
 
+        // Ensure the Karpathy-style wiki layout + schema.md exist on disk.
+        // Cheap, idempotent — fire-and-forget at startup.
+        Task.detached(priority: .utility) {
+            await WikiKnowledgeBase().bootstrap()
+        }
+
+        let perception = PerceptionEngine()
+        // Unique TutorialEngine — shared by generateFirstLaunchTip (via
+        // container.tutorialEngine) and WalkthroughController.start().
+        // Avoid constructing it twice; they wrap the same engine anyway.
+        let tutorialEngine: TutorialEngine
+
         let engine = AssistantEngine(
             audioCaptureService: audioCaptureService,
             voiceService: voiceService,
@@ -130,13 +160,16 @@ final class AppContainer: ObservableObject {
             conversationStore: conversationStore,
             knowledgeStore: knowledgeStore,
             tourGuideStore: tourGuideStore,
-            settingsProvider: { AppSettings.load() }
+            settingsProvider: { AppSettings.load() },
+            perception: perception
         )
 
         let logger = RuntimeLogger()
         logger.log("Anna starting up", tag: "app")
         logger.log("Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")", tag: "app")
         logger.log("Build: \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?")", tag: "app")
+
+        tutorialEngine = TutorialEngine(engine: engine, settingsProvider: { AppSettings.load() })
 
         let settings = AppSettings.load()
         let onboarding = OnboardingState()
@@ -169,8 +202,52 @@ final class AppContainer: ObservableObject {
             knowledgeStore: knowledgeStore,
             tourGuideStore: tourGuideStore,
             clipboardWatcher: clipboardWatcher,
-            logger: logger
+            logger: logger,
+            perception: perception,
+            tutorialEngine: tutorialEngine,
+            appActivationObserver: AppActivationObserver(perception: perception),
+            tipCardController: TipCardController(
+                engine: engine,
+                settingsProvider: { AppSettings.load() },
+                // Persist to disk immediately; the @Published `settings` on
+                // the container is synced after construction (below) so
+                // observers see the new suppress list too.
+                settingsUpdater: { newSettings in newSettings.save() }
+            ),
+            walkthroughController: WalkthroughController(
+                tutorialEngine: tutorialEngine, engine: engine
+            )
         )
+
+        // Fire a first-launch onboarding tip the first time a new app is focused.
+        container.appActivationObserver.onActivation = { [weak container] bundleID, appName, launchCount, isElectron in
+            guard let container else { return }
+
+            // Spec Layer 1: Electron apps need Screen Recording (AX tree is empty).
+            // Lazy-request only when we actually encounter one — no permission
+            // nag for users who never open Figma/VS Code/Slack/etc.
+            if isElectron && !CGPreflightScreenCaptureAccess() {
+                container.logger.log(
+                    "Electron app \(appName) detected — requesting Screen Recording", tag: "permission")
+                CGRequestScreenCaptureAccess()
+            }
+
+            guard launchCount == 1 else { return }
+            Task { @MainActor in
+                container.logger.log("First-launch observed for \(appName) [\(bundleID)]", tag: "onboard")
+                if let tip = await container.tutorialEngine.generateFirstLaunchTip(
+                    bundleID: bundleID, appName: appName) {
+                    container.tipCardController.show(tip: tip, bundleID: bundleID, appName: appName)
+                }
+            }
+        }
+        container.appActivationObserver.start()
+
+        // Weekly wiki lint + index rebuild (spec Layer 4). Fires once now if
+        // ≥7 days since the last run, then ticks every 24h.
+        let lintScheduler = LintScheduler()
+        lintScheduler.start()
+        container._lintScheduler = lintScheduler
 
         // Start clipboard watching (respects settings)
         clipboardWatcher.enabled = settings.clipboardCaptureEnabled
@@ -245,6 +322,36 @@ final class AppContainer: ObservableObject {
             return event
         }
         logger.log("Global hotkey registered — ⌘⇧Space for text bar", tag: "hotkey")
+
+        // Spec global hotkey: ⌘⇧A → open Anna anywhere.
+        // A = keyCode 0. Consumed when the key press is our own.
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return }
+            if event.keyCode == 0 &&
+               event.modifierFlags.contains(.command) &&
+               event.modifierFlags.contains(.shift) &&
+               !event.modifierFlags.contains(.control) &&
+               !event.modifierFlags.contains(.option) {
+                DispatchQueue.main.async {
+                    self.textBarController.toggle(viewModel: self.assistantViewModel)
+                }
+            }
+        }
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == 0 &&
+               event.modifierFlags.contains(.command) &&
+               event.modifierFlags.contains(.shift) &&
+               !event.modifierFlags.contains(.control) &&
+               !event.modifierFlags.contains(.option) {
+                DispatchQueue.main.async {
+                    self.textBarController.toggle(viewModel: self.assistantViewModel)
+                }
+                return nil
+            }
+            return event
+        }
+        logger.log("Global hotkey registered — ⌘⇧A for Anna", tag: "hotkey")
 
         // Global hotkey: Ctrl+Option+Space → toggle rewrite dictation
         // First press starts recording, second press stops → rewrite → insert

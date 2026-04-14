@@ -183,6 +183,10 @@ struct AppSettings: Codable, Sendable {
     var tutorModeEnabled: Bool = false
     var autoCopyResponsesEnabled: Bool = false
     var focusedWindowCaptureEnabled: Bool = false
+    /// Proactively onboard the user on the first launch of a new app.
+    var onboardingEnabled: Bool = true
+    /// Bundle IDs for which the user picked "Never show for this app".
+    var suppressedOnboardingBundleIDs: [String] = []
 
     static let defaultValue = AppSettings()
 

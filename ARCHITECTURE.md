@@ -9,7 +9,7 @@ Anna is a native macOS SwiftUI application that acts as a voice-driven assistant
 ```
 ┌──────────────────────────────────────────────────┐
 │                    App Layer                      │
-│  MariaApp.swift, AppContainer.swift,              │
+│  AnnaApp.swift, AppContainer.swift,               │
 │  RootContentView.swift                            │
 │  (Entry point, DI container, root view routing)   │
 └────────────────────┬─────────────────────────────┘
