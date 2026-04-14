@@ -183,7 +183,11 @@ actor ClaudeCLIService {
     5. After your [CLICK:...], I will click that element, take a fresh screenshot, and send it back. You then do the NEXT step.
     6. Smooth continuous narration — like walking someone through in person.
     7. Do NOT list all steps upfront. Just describe THIS screen and click to the next thing.
-    8. When the tour is GENUINELY done (you've covered all the major features — usually 6-10 steps), end with a brief wrap-up and [POINT:none]. Do NOT end early. Tours should feel thorough, not rushed.
+    8. Match tour depth to the user's ask:
+       - "quick tour", "basic tour", "brief" → cover main features only (3-5 steps)
+       - "full tour", "complete", "everything", "all features" → cover ALL features thoroughly (10+ steps)
+       - just "tour" or "walk me through" → cover the core features (5-8 steps)
+       End with a brief wrap-up and [POINT:none] ONLY when you've fulfilled what the user asked for. Don't cut short, don't pad — match their intent.
     9. If the screenshot shows an app you don't recognize, still guide through it by describing what you see — buttons, menus, tabs. You're an AI, you can figure it out from the visual.
 
     CLICK vs POINT — WHEN TO USE EACH:

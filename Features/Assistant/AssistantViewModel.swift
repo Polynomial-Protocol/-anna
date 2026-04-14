@@ -113,6 +113,7 @@ final class AssistantViewModel: ObservableObject {
                     self.guidedModeStepCount = 0
                     if self.isInTourMode && !wasTourMode {
                         self.tourStartTime = Date()
+                        self.tourOriginalRequest = result.0
                         let settings = self.settingsProvider()
                         self.tourAnalytics.tourStarted(tourGuideID: settings.activeTourGuideID, tourName: "Voice tour")
                     }
@@ -200,6 +201,7 @@ final class AssistantViewModel: ObservableObject {
                             self.isInTourMode = true
                             self.guidedModeStepCount = 0
                             self.tourStartTime = Date()
+                            self.tourOriginalRequest = trimmed
                             let settings = self.settingsProvider()
                             self.tourAnalytics.tourStarted(tourGuideID: settings.activeTourGuideID, tourName: "Text tour")
                         }
@@ -246,9 +248,11 @@ final class AssistantViewModel: ObservableObject {
     // MARK: - Pointer, Click & Guided Mode
 
     private var guidedModeStepCount = 0
-    private let maxGuidedSteps = 15
-    private let minStepsBeforeEnd = 5
+    /// Hard safety cap to prevent infinite loops if Claude keeps going. Claude decides when to stop via [POINT:none].
+    private let maxGuidedSteps = 25
     @Published var isInTourMode = false
+    /// Stores the user's original tour request so continuation prompts can preserve the user's intent (basic vs complete).
+    private var tourOriginalRequest: String = ""
 
     private static let tourKeywords = [
         "tour", "walk me through", "walkthrough", "walk through",
@@ -325,14 +329,11 @@ final class AssistantViewModel: ObservableObject {
                         self.statusLine = "All done — I'm here if you need me."
                     }
 
-                } else if isTourEnd && (self.isInTourMode == false || self.guidedModeStepCount >= self.minStepsBeforeEnd) {
-                    // Explicit tour end: [POINT:none] — but only honor it after min steps during a tour
-                    // This prevents Claude from prematurely ending after 2-3 steps.
+                } else if isTourEnd {
+                    // Claude decided the tour is done — trust its judgment
                     self.finishTour()
 
                 } else if self.isInTourMode {
-                    // Either no pointer, or a POINT (not CLICK), or a premature [POINT:none]
-                    // Keep tour alive — Claude should continue
                     // Mid-tour response without a click (e.g., POINT action or description-only)
                     // Keep tour alive and continue to next step
                     self.guidedModeStepCount += 1
@@ -388,7 +389,8 @@ final class AssistantViewModel: ObservableObject {
         Task {
             do {
                 let stepNum = self.guidedModeStepCount + 1
-                let result = try await engine.executeInternalText("The click happened (step \(stepNum)). Look at the NEW screenshot. If it looks the same as before, the click didn't work — say so briefly and try clicking a slightly different spot. Otherwise, describe what you SEE in 1-2 short sentences, then click the NEXT element using [CLICK:x,y:label]. Keep going — continue the tour, do not end it yet. Guide through whatever app is visible — do NOT switch apps. Only use [POINT:none] to end the tour if you have thoroughly covered all the major features (at least 6-8 steps).")
+                let originalRequest = self.tourOriginalRequest.isEmpty ? "a tour" : "\"\(self.tourOriginalRequest)\""
+                let result = try await engine.executeInternalText("Continuing the user's tour — they originally asked: \(originalRequest). This is step \(stepNum). Look at the NEW screenshot. If it looks the same as before, the click didn't work — say so briefly and try clicking a slightly different spot. Otherwise, describe what you SEE in 1-2 short sentences, then click the NEXT element using [CLICK:x,y:label]. Guide through whatever app is visible — do NOT switch apps. Match the depth of tour the user asked for: quick/basic = cover main features only (3-5 steps), complete/full/everything = cover ALL features thoroughly (10+ steps), unspecified = cover the core features (5-8 steps). When you have fulfilled the user's request, wrap up with [POINT:none].")
                 await MainActor.run {
                     self.lastTranscript = "Guided walkthrough (step \(self.guidedModeStepCount + 1))"
                     self.lastTranscriptTime = Date()
