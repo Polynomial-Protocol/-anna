@@ -542,12 +542,30 @@ final class AssistantViewModel: ObservableObject {
                     }
 
                     self.guidedModeStepCount += 1
+                    self.logger?.log("Teach step \(self.guidedModeStepCount) — pointing at \(key)", tag: "guide")
+
+                    // ONE-SHOT TEACH: for short plans (≤ 5 steps), we narrate
+                    // the whole path in a single response, point at the first
+                    // element, and then get out of the user's way. No
+                    // per-click API round-trips, no waitForUserAndContinue.
+                    // If the user gets stuck, they can always re-ask.
+                    //
+                    // Step-by-step teach mode is reserved for plans of 6+
+                    // steps (the system prompt enforces the split).
+                    let isOneShot = self.cachedPlanStepCount == 0
+                        || self.cachedPlanStepCount <= 5
+                    if isOneShot {
+                        self.statusLine = "Your turn — I've pointed at where to start."
+                        self.status = .idle
+                        self.finishTour()
+                        return
+                    }
+
                     self.statusLine = "Your turn — click the highlighted spot."
                     self.status = .idle
-                    self.logger?.log("Teach step \(self.guidedModeStepCount) — waiting for user action at \(key)", tag: "guide")
 
-                    // Wait until the user has been idle for a beat (i.e. they did something and paused),
-                    // then advance. Safety cap: give up after 60s of inactivity.
+                    // Step-by-step (rare: plans 6+ steps). Wait until user
+                    // has been idle for a beat, then advance.
                     if self.shouldContinueGuidedStep() {
                         self.waitForUserAndContinue()
                     } else {
